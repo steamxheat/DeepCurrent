@@ -1,0 +1,275 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-12T00:32:00Z",
+  "title": "Design System: DC Pulse",
+  "extensions": {
+    "colorMeta": {
+      "terminal-black": {
+        "role": "neutral",
+        "displayName": "Terminal Black",
+        "canonical": "#060910",
+        "tonalRamp": ["oklch(15% 0.018 260)", "oklch(26% 0.018 260)", "oklch(38% 0.016 260)", "oklch(50% 0.014 260)", "oklch(62% 0.012 260)", "oklch(74% 0.010 260)", "oklch(86% 0.008 260)", "oklch(95% 0.005 260)"]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Instrument Panel",
+        "canonical": "#0a0f18",
+        "tonalRamp": ["oklch(15% 0.022 255)", "oklch(26% 0.021 255)", "oklch(38% 0.019 255)", "oklch(50% 0.017 255)", "oklch(62% 0.014 255)", "oklch(74% 0.011 255)", "oklch(86% 0.008 255)", "oklch(95% 0.005 255)"]
+      },
+      "panel-raised": {
+        "role": "neutral",
+        "displayName": "Raised Control",
+        "canonical": "#0d131e",
+        "tonalRamp": ["oklch(15% 0.025 255)", "oklch(26% 0.024 255)", "oklch(38% 0.022 255)", "oklch(50% 0.019 255)", "oklch(62% 0.016 255)", "oklch(74% 0.012 255)", "oklch(86% 0.009 255)", "oklch(95% 0.005 255)"]
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline Slate",
+        "canonical": "rgba(148, 163, 184, .15)",
+        "tonalRamp": ["oklch(15% 0.025 255)", "oklch(26% 0.027 255)", "oklch(38% 0.029 255)", "oklch(50% 0.031 255)", "oklch(62% 0.030 255)", "oklch(74% 0.025 255)", "oklch(86% 0.016 255)", "oklch(95% 0.008 255)"]
+      },
+      "text-primary": {
+        "role": "neutral",
+        "displayName": "Primary Ink",
+        "canonical": "#f3f6fa",
+        "tonalRamp": ["oklch(15% 0.010 250)", "oklch(26% 0.010 250)", "oklch(38% 0.010 250)", "oklch(50% 0.009 250)", "oklch(62% 0.008 250)", "oklch(74% 0.007 250)", "oklch(86% 0.005 250)", "oklch(95% 0.003 250)"]
+      },
+      "text-muted": {
+        "role": "neutral",
+        "displayName": "Muted Slate",
+        "canonical": "#8d99aa",
+        "tonalRamp": ["oklch(15% 0.025 255)", "oklch(26% 0.027 255)", "oklch(38% 0.029 255)", "oklch(50% 0.030 255)", "oklch(62% 0.028 255)", "oklch(74% 0.023 255)", "oklch(86% 0.015 255)", "oklch(95% 0.008 255)"]
+      },
+      "signal-cyan": {
+        "role": "primary",
+        "displayName": "Signal Cyan",
+        "canonical": "#5ee3dc",
+        "tonalRamp": ["oklch(15% 0.065 188)", "oklch(26% 0.090 188)", "oklch(38% 0.115 188)", "oklch(50% 0.135 188)", "oklch(62% 0.145 188)", "oklch(74% 0.130 188)", "oklch(86% 0.085 188)", "oklch(95% 0.035 188)"]
+      },
+      "signal-cyan-deep": {
+        "role": "primary",
+        "displayName": "Deep Signal Cyan",
+        "canonical": "#19bcb8",
+        "tonalRamp": ["oklch(15% 0.070 188)", "oklch(26% 0.100 188)", "oklch(38% 0.130 188)", "oklch(50% 0.150 188)", "oklch(62% 0.155 188)", "oklch(74% 0.135 188)", "oklch(86% 0.090 188)", "oklch(95% 0.038 188)"]
+      },
+      "loss-red": {
+        "role": "secondary",
+        "displayName": "Loss Red",
+        "canonical": "#ff6888",
+        "tonalRamp": ["oklch(15% 0.095 15)", "oklch(26% 0.135 15)", "oklch(38% 0.175 15)", "oklch(50% 0.205 15)", "oklch(62% 0.215 15)", "oklch(74% 0.180 15)", "oklch(86% 0.105 15)", "oklch(95% 0.040 15)"]
+      },
+      "warning-amber": {
+        "role": "secondary",
+        "displayName": "Warning Amber",
+        "canonical": "#ffc466",
+        "tonalRamp": ["oklch(15% 0.075 75)", "oklch(26% 0.105 75)", "oklch(38% 0.135 75)", "oklch(50% 0.160 75)", "oklch(62% 0.175 75)", "oklch(74% 0.155 75)", "oklch(86% 0.095 75)", "oklch(95% 0.035 75)"]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Compact page-level trader and wallet headings."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Panel headings, trader names, and section anchors."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Supporting copy and compact control text."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Dense table headings, state labels, and metadata."
+      },
+      "data": {
+        "displayName": "Data",
+        "purpose": "Financial values, addresses, timestamps, and chart labels."
+      }
+    },
+    "shadows": [
+      {
+        "name": "chart-marker",
+        "value": "0 4px 16px rgba(0,0,0,.35)",
+        "purpose": "Small event-count markers over the graph."
+      },
+      {
+        "name": "chart-tooltip",
+        "value": "0 12px 30px rgba(0,0,0,.38)",
+        "purpose": "Read-only hover detail over plotted data."
+      },
+      {
+        "name": "chart-detail",
+        "value": "0 14px 36px rgba(0,0,0,.46)",
+        "purpose": "Selected event groups above dense plotted data."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state-fast",
+        "value": "160ms ease",
+        "purpose": "Color and background transitions on compact controls and data rows."
+      },
+      {
+        "name": "live-pulse",
+        "value": "1800ms ease-in-out infinite",
+        "purpose": "Opacity and scale pulse for the live connection dot only."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Compact Action",
+      "kind": "button",
+      "refersTo": "compact-action",
+      "description": "Quiet inline action for panel headers and secondary terminal commands.",
+      "html": "<button class=\"ds-compact-action\">OPEN RANKING<svg aria-hidden=\"true\" width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 12h14\"/><path d=\"m14 7 5 5-5 5\"/></svg></button>",
+      "css": ".ds-compact-action { display:inline-flex; min-height:32px; align-items:center; gap:7px; border:0; border-radius:6px; padding:0 9px; background:transparent; color:var(--muted); font:600 10px/1.25 var(--font-geist-sans),system-ui,sans-serif; letter-spacing:.08em; transition:color .16s ease,background-color .16s ease; } .ds-compact-action:hover { color:var(--cyan); background:rgba(94,227,220,.06); } .ds-compact-action:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; } .ds-compact-action:active { background:rgba(94,227,220,.1); }"
+    },
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "icon-button",
+      "description": "A restrained square control for refresh, favorite, and dismiss actions.",
+      "html": "<button class=\"ds-icon-button\" aria-label=\"Refresh data\"><svg aria-hidden=\"true\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 7v5h-5M4 17v-5h5\"/><path d=\"M6.1 9a7 7 0 0 1 11.4-2L20 9M4 15l2.5 2a7 7 0 0 0 11.4-2\"/></svg></button>",
+      "css": ".ds-icon-button { display:flex; width:34px; height:34px; align-items:center; justify-content:center; border:1px solid var(--line); border-radius:7px; background:transparent; color:var(--muted); transition:color .16s ease,background-color .16s ease,border-color .16s ease; } .ds-icon-button:hover { color:var(--text); background:rgba(255,255,255,.04); border-color:rgba(148,163,184,.28); } .ds-icon-button:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; } .ds-icon-button:active { background:rgba(255,255,255,.065); }"
+    },
+    {
+      "name": "Control Field",
+      "kind": "input",
+      "refersTo": "control-field",
+      "description": "Compact search and selection field within a dense data panel.",
+      "html": "<label class=\"ds-control-field\"><svg aria-hidden=\"true\" width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\"><circle cx=\"11\" cy=\"11\" r=\"7\"/><path d=\"m20 20-4-4\"/></svg><input aria-label=\"Search trader\" placeholder=\"Address or name\" /></label>",
+      "css": ".ds-control-field { display:flex; min-height:36px; align-items:center; gap:8px; border:1px solid var(--line); border-radius:7px; background:var(--panel-2); padding:0 11px; color:var(--text); font:400 12px/1.5 var(--font-geist-sans),system-ui,sans-serif; } .ds-control-field input { min-width:0; flex:1; border:0; outline:0; background:transparent; color:inherit; font:inherit; } .ds-control-field input::placeholder { color:#657083; } .ds-control-field:hover { border-color:rgba(148,163,184,.28); } .ds-control-field:focus-within { outline:2px solid var(--cyan); outline-offset:3px; }"
+    },
+    {
+      "name": "Selected Navigation",
+      "kind": "nav",
+      "refersTo": "nav-selected",
+      "description": "The selected desktop navigation item with a quiet cyan wash.",
+      "html": "<button class=\"ds-nav-selected\" aria-current=\"page\"><svg aria-hidden=\"true\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m4 10 8-6 8 6\"/><path d=\"M6 9v10h12V9M10 19v-6h4v6\"/></svg><span>Overview</span></button>",
+      "css": ".ds-nav-selected { position:relative; display:flex; min-height:36px; align-items:center; justify-content:center; gap:8px; border:0; border-radius:6px; padding:0 12px; background:rgba(94,227,220,.07); color:var(--cyan); font:500 12px/1.25 var(--font-geist-sans),system-ui,sans-serif; transition:background-color .16s ease,color .16s ease; } .ds-nav-selected:hover { background:rgba(94,227,220,.1); } .ds-nav-selected:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; } .ds-nav-selected:active { background:rgba(94,227,220,.14); }"
+    },
+    {
+      "name": "Live Status Chip",
+      "kind": "chip",
+      "refersTo": "status-chip",
+      "description": "A compact connection state reserved for verified live data.",
+      "html": "<span class=\"ds-status-chip\"><i></i>LIVE</span>",
+      "css": "@keyframes ds-live-pulse { 0%,100% { opacity:.45; transform:scale(.88); } 50% { opacity:1; transform:scale(1); } } .ds-status-chip { display:inline-flex; height:30px; align-items:center; gap:7px; border:1px solid var(--line); border-radius:999px; padding:0 10px; color:var(--cyan); font:700 9px/1.25 var(--font-geist-sans),system-ui,sans-serif; letter-spacing:.08em; } .ds-status-chip i { width:6px; height:6px; border-radius:999px; background:var(--cyan); animation:ds-live-pulse 1.8s ease-in-out infinite; } @media (prefers-reduced-motion:reduce) { .ds-status-chip i { animation:none; } }"
+    },
+    {
+      "name": "Gain Direction Badge",
+      "kind": "chip",
+      "refersTo": "side-badge-gain",
+      "description": "A tight directional badge for long and positive states.",
+      "html": "<span class=\"ds-side-badge-gain\">LONG</span>",
+      "css": ".ds-side-badge-gain { display:inline-flex; min-width:46px; height:21px; align-items:center; justify-content:center; border-radius:4px; background:rgba(94,227,220,.09); color:var(--cyan); font:700 9px/1.25 var(--font-geist-sans),system-ui,sans-serif; letter-spacing:.04em; }"
+    },
+    {
+      "name": "Loss Direction Badge",
+      "kind": "chip",
+      "refersTo": "side-badge-loss",
+      "description": "A tight directional badge for short and negative states.",
+      "html": "<span class=\"ds-side-badge-loss\">SHORT</span>",
+      "css": ".ds-side-badge-loss { display:inline-flex; min-width:46px; height:21px; align-items:center; justify-content:center; border-radius:4px; background:rgba(255,104,136,.09); color:var(--loss); font:700 9px/1.25 var(--font-geist-sans),system-ui,sans-serif; letter-spacing:.04em; }"
+    },
+    {
+      "name": "Instrument Panel",
+      "kind": "card",
+      "refersTo": "surface",
+      "description": "The flat, hairline-bounded container used for rankings, feeds, and market data.",
+      "html": "<section class=\"ds-surface\"><header><div><strong>Top traders</strong><small>100 curated accounts</small></div><button>VIEW ALL</button></header><div class=\"ds-surface-row\"><span>01</span><b>Trader Alpha</b><output>+$42.8K</output></div></section>",
+      "css": ".ds-surface { overflow:hidden; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--text); font-family:var(--font-geist-sans),system-ui,sans-serif; } .ds-surface header { display:flex; min-height:56px; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); padding:12px 16px; } .ds-surface strong { display:block; font-size:14px; font-weight:600; } .ds-surface small { display:block; margin-top:2px; color:var(--muted); font-size:10px; } .ds-surface button { border:0; border-radius:6px; background:transparent; color:var(--muted); padding:7px 9px; font-size:10px; } .ds-surface button:hover { color:var(--cyan); background:rgba(94,227,220,.06); } .ds-surface button:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; } .ds-surface-row { display:grid; grid-template-columns:32px 1fr auto; align-items:center; gap:12px; padding:11px 16px; font-size:12px; transition:background-color .16s ease; } .ds-surface-row:hover { background:rgba(255,255,255,.025); } .ds-surface-row span { color:var(--muted); font-family:var(--font-geist-mono),monospace; } .ds-surface-row output { color:var(--cyan); font-family:var(--font-geist-mono),monospace; }"
+    },
+    {
+      "name": "Performance Tooltip",
+      "kind": "custom",
+      "description": "A transient chart readout that earns elevation over dense plotted data.",
+      "html": "<div class=\"ds-chart-tooltip\"><small>12 Oct, 03:30</small><strong>+$18,420.35</strong></div>",
+      "css": ".ds-chart-tooltip { width:max-content; min-width:144px; border:1px solid rgba(255,255,255,.12); border-radius:12px; background:rgba(16,24,39,.95); padding:8px 12px; box-shadow:0 12px 30px rgba(0,0,0,.38); color:var(--text); font-family:var(--font-geist-sans),system-ui,sans-serif; } .ds-chart-tooltip small { display:block; color:var(--muted); font-size:10px; } .ds-chart-tooltip strong { display:block; margin-top:4px; color:var(--cyan); font:600 14px/1.25 var(--font-geist-mono),monospace; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Curated Intelligence Terminal",
+    "overview": "DC Pulse is a compact, HyperStats-like intelligence terminal for a curated set of strong traders. It should feel near-black, flat, dense, restrained, and built for repeated professional use: the interface gets out of the way while evidence, comparisons, and live actions remain immediately scannable.\n\nThe visual system expresses confidence through disciplined hierarchy rather than decoration. The turquoise ribbon mark is the primary identity asset, while cyan is reserved for positive, live, and selected states. Oversized pill controls, inflated card dashboards, excessive gradients, glass effects, and loose spacing are explicit anti-references.",
+    "keyCharacteristics": [
+      "Near-black terminal surfaces separated by hairline rules.",
+      "Compact controls and dense data rows with clear alignment.",
+      "Cyan for verified positive, live, or selected states; red for loss.",
+      "Geist for interface language and Geist Mono for financial data.",
+      "The turquoise ribbon mark remains intact and is never replaced by a letterform."
+    ],
+    "rules": [
+      {
+        "name": "The Signal Color Rule",
+        "body": "Cyan means positive, live, or selected; red means loss. Neither color is general decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The Near-Black Field Rule",
+        "body": "Build hierarchy with adjacent dark tones and hairline rules, not with bright cards or ornamental color blocks.",
+        "section": "colors"
+      },
+      {
+        "name": "The Data Has a Different Voice Rule",
+        "body": "Financial values and addresses use Geist Mono; explanatory language stays in Geist.",
+        "section": "typography"
+      },
+      {
+        "name": "The No Hero Type Rule",
+        "body": "This is an operating terminal, so headings establish hierarchy without displacing data from the first viewport.",
+        "section": "typography"
+      },
+      {
+        "name": "The Scan Before Scroll Rule",
+        "body": "The first viewport should reveal identity, market context, the strongest comparison evidence, and live state without oversized controls or decorative whitespace.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat-by-Default Rule",
+        "body": "Resting surfaces use tone and borders; shadow appears only when a transient chart layer needs functional separation.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Compact Instrument Rule",
+        "body": "A radius describes component scale and purpose; it never turns every control or container into a large soft pill.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "Do keep the first viewport dense with trader identity, comparable evidence, and live state.",
+      "Do use cyan only for positive, live, or selected states, and red for losses or negative performance.",
+      "Do use hairline borders and neighboring dark tones to organize panels, rows, tables, and charts.",
+      "Do keep financial values and wallet addresses in Geist Mono.",
+      "Do preserve the turquoise ribbon logo's shape and proportions as the primary brand mark.",
+      "Do maintain the same complete workflow on phone and desktop through reflow and scrolling."
+    ],
+    "donts": [
+      "Don't create oversized pill buttons, giant controls, or inflated dashboard cards.",
+      "Don't use decorative gradients; chart area gradients are allowed only when they encode positive and negative performance.",
+      "Don't use glass effects on ordinary surfaces or substitute shadow for structural borders.",
+      "Don't loosen spacing until the interface reads like a marketing dashboard instead of an intelligence terminal.",
+      "Don't spend cyan on ornamental accents, neutral actions, or arbitrary emphasis.",
+      "Don't replace the ribbon mark with initials, a monogram, or a generic crypto symbol."
+    ]
+  }
+}
