@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { closedTrades, computeFillStats, findConfluences, positionOpenedAt, type Fill } from "./stats.ts";
+import { closedTrades, computeFillStats, findConfluences, mergeFills, positionOpenedAt, type Fill } from "./stats.ts";
 
 const fill = (overrides: Partial<Fill>): Fill => ({
   coin: "BTC", px: "100", sz: "1", side: "B", time: 1_000, dir: "Open Long",
@@ -37,6 +37,12 @@ test("position opening time survives later additions and reductions", () => {
 test("position opening time is the fill that flipped its direction", () => {
   const fills = [fill({ time: 100, sz: "10", side: "B", dir: "Open Long" })];
   assert.equal(positionOpenedAt(5, "BTC", fills), 100);
+});
+
+test("fill history pagination stays newest-first and removes inclusive-page duplicates", () => {
+  const oldest = fill({ time: 100, tid: 1, hash: "0xa" });
+  const newest = fill({ time: 300, tid: 3, hash: "0xc" });
+  assert.deepEqual(mergeFills([oldest, fill({ time: 200, tid: 2, hash: "0xb" })], [newest, oldest]), [newest, fill({ time: 200, tid: 2, hash: "0xb" }), oldest]);
 });
 
 test("closed trades combine partial reductions and preserve duration", () => {

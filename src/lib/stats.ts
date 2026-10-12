@@ -8,6 +8,7 @@ export type Fill = {
   closedPnl: string;
   fee: string;
   hash: string;
+  tid?: number;
   startPosition?: string;
   wallet?: string;
 };
@@ -22,6 +23,15 @@ export type ClosedTrade = {
   size: number;
   netPnl: number;
 };
+
+const fillKey = (fill: Fill) => fill.tid === undefined
+  ? `${fill.hash}:${fill.coin}:${fill.time}:${fill.side}:${fill.px}:${fill.sz}`
+  : `${fill.time}:${fill.coin}:${fill.tid}`;
+
+export function mergeFills(...groups: Fill[][]) {
+  return [...new Map(groups.flat().map((fill) => [fillKey(fill), fill])).values()]
+    .sort((a, b) => b.time - a.time).slice(0, 10_000);
+}
 
 export function netClosedPnl(fill: Pick<Fill, "closedPnl" | "fee">) {
   return Number(fill.closedPnl || 0) + Number(fill.fee || 0);

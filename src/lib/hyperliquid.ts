@@ -1,5 +1,5 @@
 import "server-only";
-import { closedTrades, positionOpenedAt, type ClosedTrade, type Fill } from "./stats";
+import { closedTrades, mergeFills, positionOpenedAt, type ClosedTrade, type Fill } from "./stats";
 import { normalizePerpPortfolio, type PortfolioRange, type PortfolioSeries, type RawPortfolioEntry } from "./portfolio";
 import { getAdminConfig, type AdminConfig } from "./admin-store";
 import { walletQuality } from "./wallet-quality";
@@ -8,6 +8,8 @@ import { displayCoin, spotCoinNames, type SpotMeta } from "./live";
 const INFO_URL = "https://api.hyperliquid.xyz/info";
 const LEADERBOARD_URL = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard";
 let leaderboardCache: { expires: number; rows: WalletRow[]; sourceCount: number } | undefined;
+type WalletFillCache = { fills: Fill[]; recentStart: number; backfillStart: number; complete: boolean; usedAt: number };
+const walletFillCache = new Map<string, WalletFillCache>();
 type WindowName = "day" | "week" | "month" | "allTime";
 type WindowPerformance = [WindowName, { pnl: string; roi: string; vlm: string }];
 type RawLeaderboardRow = { ethAddress: string; accountValue: string; windowPerformances: WindowPerformance[]; displayName?: string | null };
@@ -57,6 +59,35 @@ async function info<T>(body: Record<string, unknown>, revalidate: number): Promi
   });
   if (!response.ok) throw new Error(`Hyperliquid API: ${response.status}`);
   return response.json() as Promise<T>;
+}
+
+async function getWalletFills(address: string) {
+  const key = address.toLowerCase();
+  const cached = walletFillCache.get(key);
+  if (!cached) {
+    const fills = await info<Fill[]>({ type: "userFills", user: address, aggregateByTime: true }, 2);
+    const recentStart = fills.length ? Math.min(...fills.map((fill) => fill.time)) : 0;
+    const entry = { fills, recentStart, backfillStart: 0, complete: fills.length < 2_000, usedAt: Date.now() };
+    walletFillCache.set(key, entry);
+    return { fills, analysisFills: fills };
+  }
+
+  const latestTime = cached.fills[0]?.time ?? 0;
+  const latestPromise = info<Fill[]>({ type: "userFillsByTime", user: address, startTime: latestTime, aggregateByTime: true }, 2);
+  const backfillPromise = cached.complete
+    ? Promise.resolve<Fill[]>([])
+    : info<Fill[]>({ type: "userFillsByTime", user: address, startTime: cached.backfillStart, aggregateByTime: true }, 2);
+  const [latest, backfill] = await Promise.all([latestPromise, backfillPromise]);
+  const fills = mergeFills(cached.fills, latest, backfill);
+  const nextStart = backfill.length ? Math.max(...backfill.map((fill) => fill.time)) : cached.backfillStart;
+  const complete = cached.complete || backfill.length < 2_000 || nextStart >= cached.recentStart;
+  const entry = { ...cached, fills, backfillStart: nextStart, complete, usedAt: Date.now() };
+  walletFillCache.set(key, entry);
+  if (walletFillCache.size > 100) {
+    const oldest = [...walletFillCache].sort((a, b) => a[1].usedAt - b[1].usedAt)[0]?.[0];
+    if (oldest) walletFillCache.delete(oldest);
+  }
+  return { fills, analysisFills: complete ? fills : fills.filter((fill) => fill.time >= cached.recentStart) };
 }
 
 function performance(row: RawLeaderboardRow, name: WindowName) {
@@ -199,32 +230,27 @@ export async function getDashboardData(): Promise<DashboardData> {
 
 export async function getWalletDetail(address: string): Promise<WalletDetail> {
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error("Некорректный адрес кошелька");
-  const [recentFills, portfolio, spotMeta, spotState] = await Promise.all([
-    info<Fill[]>({ type: "userFills", user: address, aggregateByTime: true }, 2),
+  const [history, portfolio, spotMeta, spotState] = await Promise.all([
+    getWalletFills(address),
     info<RawPortfolioEntry[]>({ type: "portfolio", user: address }, 30),
     info<SpotMeta>({ type: "spotMeta" }, 3_600).catch(() => ({ universe: [], tokens: [] })),
     info<RawSpotState>({ type: "spotClearinghouseState", user: address }, 2).catch(() => ({ balances: [] })),
   ]);
-  const fills = [...recentFills];
-  let page = recentFills;
-  while (page.length === 2_000 && fills.length < 6_000) {
-    const oldest = Math.min(...page.map((fill) => fill.time));
-    try { page = await info<Fill[]>({ type: "userFillsByTime", user: address, startTime: 0, endTime: oldest - 1, aggregateByTime: true }, 30); } catch { break; }
-    if (!page.length || Math.min(...page.map((fill) => fill.time)) >= oldest) break;
-    fills.push(...page);
-  }
+  const { fills, analysisFills } = history;
   // shortcut: query only DEXes present in recent fills; all-DEX live updates come from the wallet WebSocket.
   const dexNames = ["", ...new Set(fills.flatMap((fill) => fill.coin.includes(":") ? [fill.coin.split(":", 1)[0]] : []))];
   const stateResults = await Promise.allSettled(dexNames.map((dex) => info<RawState>({ type: "clearinghouseState", user: address, ...(dex ? { dex } : {}) }, 2)));
   const states = stateResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
   const coinNames = spotCoinNames(spotMeta);
   const normalizedPortfolio = normalizePerpPortfolio(portfolio);
-  const normalizedFills = fills.map((fill) => ({
+  const normalizeFill = (fill: Fill): Fill => ({
     coin: displayCoin(fill.coin, coinNames), px: fill.px, sz: fill.sz, side: fill.side, time: fill.time,
-    dir: fill.dir, closedPnl: fill.closedPnl, fee: fill.fee, hash: fill.hash, startPosition: fill.startPosition,
-  }));
+    dir: fill.dir, closedPnl: fill.closedPnl, fee: fill.fee, hash: fill.hash, tid: fill.tid, startPosition: fill.startPosition,
+  });
+  const normalizedFills = fills.map(normalizeFill);
+  const normalizedAnalysisFills = analysisFills.map(normalizeFill);
   const positions = states.flatMap((state) => state.assetPositions ?? []).map(({ position }) => ({
-    coin: displayCoin(position.coin, coinNames), size: Number(position.szi), entryPx: Number(position.entryPx), openedAt: positionOpenedAt(Number(position.szi), position.coin, fills),
+    coin: displayCoin(position.coin, coinNames), size: Number(position.szi), entryPx: Number(position.entryPx), openedAt: positionOpenedAt(Number(position.szi), position.coin, analysisFills),
     positionValue: Number(position.positionValue), unrealizedPnl: Number(position.unrealizedPnl),
     leverage: Number(position.leverage?.value ?? 1), liquidationPx: position.liquidationPx ? Number(position.liquidationPx) : null,
   })).filter((position) => position.size).sort((a, b) => Math.abs(b.positionValue) - Math.abs(a.positionValue));
@@ -233,8 +259,8 @@ export async function getWalletDetail(address: string): Promise<WalletDetail> {
     totalMarginUsed: states.reduce((sum, state) => sum + Number(state.marginSummary?.totalMarginUsed ?? 0), 0), withdrawable: states.reduce((sum, state) => sum + Number(state.withdrawable ?? 0), 0),
     positions,
     spotBalances: (spotState.balances ?? []).map((balance) => ({ coin: balance.coin, total: Number(balance.total), hold: Number(balance.hold) })).filter((balance) => balance.total || balance.hold).sort((a, b) => b.total - a.total),
-    fills: normalizedFills.slice(0, 1_000), closedTrades: closedTrades(normalizedFills).slice(0, 50),
-    positionHistoryStart: fills.length ? Math.min(...fills.map((fill) => fill.time)) : null,
+    fills: normalizedFills.slice(0, 1_000), closedTrades: closedTrades(normalizedAnalysisFills).slice(0, 50),
+    positionHistoryStart: analysisFills.length ? Math.min(...analysisFills.map((fill) => fill.time)) : null,
     portfolio: normalizedPortfolio, updatedAt: Date.now(),
   };
 }
