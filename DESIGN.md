@@ -132,7 +132,7 @@ components:
 
 **Creative North Star: "The Curated Intelligence Terminal"**
 
-Deep Current is a compact, HyperStats-like intelligence terminal for a curated set of strong traders. It should feel near-black, flat, dense, restrained, and built for repeated professional use: the interface gets out of the way while evidence, comparisons, and live actions remain immediately scannable.
+Deep Current is a compact intelligence terminal for a curated set of strong traders. It should feel near-black, flat, dense, restrained, and built for repeated professional use: the interface gets out of the way while evidence, comparisons, and live actions remain immediately scannable.
 
 The visual system expresses confidence through disciplined hierarchy rather than decoration. The turquoise ribbon mark is the primary identity asset, while cyan is reserved for positive, live, and selected states. Oversized pill controls, inflated card dashboards, excessive gradients, glass effects, and loose spacing are explicit anti-references.
 
