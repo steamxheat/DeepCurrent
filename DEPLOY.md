@@ -48,6 +48,8 @@ nano .env.local
 TELEGRAM_BOT_TOKEN=НОВЫЙ_ТОКЕН_ИЗ_BOTFATHER
 APP_URL=https://pulse.example.com
 ADMIN_TELEGRAM_IDS=123456789
+DEEPCURRENT_DB_PATH=.data/deep-current.sqlite
+CONFLUENCE_WINDOW_MS=900000
 ```
 
 - Старый токен, который отправлялся в чат, нужно отозвать в BotFather и выпустить заново.
@@ -80,7 +82,7 @@ set -a
 source .env.local
 set +a
 pm2 start npm --name dc-pulse-web -- start
-pm2 start scripts/bot.mjs --name dc-pulse-bot
+pm2 start npm --name deep-current-collector -- run collector
 pm2 save
 pm2 startup
 ```
@@ -92,10 +94,10 @@ pm2 startup
 ```bash
 pm2 status
 pm2 logs dc-pulse-web
-pm2 logs dc-pulse-bot
+pm2 logs deep-current-collector
 ```
 
-Запускать несколько экземпляров `dc-pulse-web` пока нельзя: админ-состояние хранится в локальном `.data/admin-state.json`. Telegram-бот с long polling также должен работать только в одном экземпляре.
+Запускать несколько экземпляров `dc-pulse-web` пока нельзя: админ-состояние и уведомления хранятся в локальной `.data`. Collector с Telegram long polling также должен работать только в одном экземпляре.
 
 ## 6. Сделать публичный HTTPS
 
@@ -156,7 +158,7 @@ set -a
 source .env.local
 set +a
 pm2 restart dc-pulse-web --update-env
-pm2 restart dc-pulse-bot --update-env
+pm2 restart deep-current-collector --update-env
 pm2 save
 ```
 
@@ -166,7 +168,7 @@ pm2 save
 pm2 status
 pm2 logs --lines 100
 pm2 restart dc-pulse-web
-pm2 restart dc-pulse-bot
+pm2 restart deep-current-collector
 git log -1 --oneline
 ```
 

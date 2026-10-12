@@ -10,7 +10,8 @@
     "lint": "eslint",
     "test": "node --experimental-strip-types --test src/lib/*.test.ts",
     "check:live": "node scripts/check-live.mjs",
-    "bot": "node scripts/bot.mjs"
+    "bot": "node --experimental-strip-types scripts/bot.mjs",
+    "collector": "node --experimental-strip-types scripts/bot.mjs"
   },
   "dependencies": {
     "next": "16.4.0",
@@ -19,12 +20,13 @@
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
-    "@types/node": "^20",
+    "@types/node": "^24.19.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.0",
     "tailwindcss": "^4",
     "typescript": "^5"
-  }
+  },
+  "engines": { "node": ">=22.5" }
 }

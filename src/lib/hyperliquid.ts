@@ -1,5 +1,5 @@
 import "server-only";
-import type { Fill } from "./stats";
+import { closedTrades, positionOpenedAt, type ClosedTrade, type Fill } from "./stats";
 import { normalizePerpPortfolio, type PortfolioRange, type PortfolioSeries, type RawPortfolioEntry } from "./portfolio";
 import { getAdminConfig, type AdminConfig } from "./admin-store";
 import { walletQuality } from "./wallet-quality";
@@ -20,6 +20,7 @@ type RawState = {
   withdrawable?: string;
   assetPositions?: { position: RawPosition }[];
 };
+type RawSpotState = { balances?: { coin: string; token: number; total: string; hold: string; entryNtl?: string }[] };
 type RawMeta = { universe?: { name?: string }[] };
 type RawAssetContext = { dayNtlVlm?: string };
 type RawPerpDex = { name?: string } | null;
@@ -29,26 +30,30 @@ export type WalletRow = {
   dayRoi: number; dayVolume: number; weekPnl: number; monthPnl: number; monthRoi: number;
 };
 export type PulseFill = Fill & { wallet: string; walletName: string; source?: "user" | "market" };
+export type CoinFlow = { coin: string; buys: number; sells: number; realizedPnl: number; trades: number; wallets: number };
+export type MarketMover = { symbol: string; exchange: "Binance" | "Bybit"; price: number; change: number; volume: number };
 export type DashboardData = {
   wallets: WalletRow[]; prices: Record<string, number>; fills: PulseFill[];
   tracked: { address: string; name: string }[]; liveCoins: string[]; sourceCount: number;
   coinNames: Record<string, string>; tradeCoverage: number;
+  coinFlow: CoinFlow[]; marketMovers: { gainers: MarketMover[]; losers: MarketMover[] };
   config: AdminConfig; updatedAt: number; warnings: string[];
 };
 export type Position = {
   coin: string; size: number; entryPx: number; positionValue: number;
-  unrealizedPnl: number; leverage: number; liquidationPx: number | null;
+  unrealizedPnl: number; leverage: number; liquidationPx: number | null; openedAt: number | null;
 };
 export type { PortfolioRange, PortfolioSeries } from "./portfolio";
 export type WalletDetail = {
   address: string; accountValue: number; totalMarginUsed: number; withdrawable: number;
-  positions: Position[]; fills: Fill[]; portfolio: Record<PortfolioRange, PortfolioSeries>;
+  positions: Position[]; spotBalances: { coin: string; total: number; hold: number }[]; fills: Fill[]; closedTrades: ClosedTrade[];
+  positionHistoryStart: number | null; portfolio: Record<PortfolioRange, PortfolioSeries>; updatedAt: number;
 };
 
 async function info<T>(body: Record<string, unknown>, revalidate: number): Promise<T> {
   const response = await fetch(INFO_URL, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-    cache: "force-cache", next: { revalidate },
+    ...(revalidate <= 2 ? { cache: "no-store" as const } : { cache: "force-cache" as const, next: { revalidate } }),
   });
   if (!response.ok) throw new Error(`Hyperliquid API: ${response.status}`);
   return response.json() as Promise<T>;
@@ -114,6 +119,55 @@ async function getRecentFills(wallets: WalletRow[], coinNames: Record<string, st
   };
 }
 
+async function getCoinFlow(wallets: WalletRow[], coinNames: Record<string, string>) {
+  const tracked = wallets.slice(0, 5);
+  const startTime = Date.now() - 24 * 60 * 60 * 1_000;
+  const responses = await Promise.allSettled(tracked.map(async (wallet) => ({
+    wallet: wallet.address,
+    fills: await info<Fill[]>({ type: "userFillsByTime", user: wallet.address, startTime, aggregateByTime: true }, 120),
+  })));
+  const rows = new Map<string, { coin: string; buys: number; sells: number; realizedPnl: number; trades: number; wallets: Set<string> }>();
+  for (const result of responses) {
+    if (result.status !== "fulfilled") continue;
+    for (const fill of result.value.fills) {
+      const coin = displayCoin(fill.coin, coinNames); const notional = Math.abs(Number(fill.px) * Number(fill.sz));
+      const row = rows.get(coin) ?? { coin, buys: 0, sells: 0, realizedPnl: 0, trades: 0, wallets: new Set<string>() };
+      if (fill.side === "B") row.buys += notional; else row.sells += notional;
+      row.realizedPnl += Number(fill.closedPnl || 0) + Number(fill.fee || 0); row.trades += 1; row.wallets.add(result.value.wallet);
+      rows.set(coin, row);
+    }
+  }
+  return [...rows.values()].map((row): CoinFlow => ({ ...row, wallets: row.wallets.size }))
+    .sort((a, b) => b.buys + b.sells - a.buys - a.sells).slice(0, 20);
+}
+
+const ignoredBases = new Set(["USDT", "USDC", "FDUSD", "TUSD", "DAI", "USDE", "USDD", "PYUSD", "RLUSD", "USD1", "USDH", "USDF", "BUSD", "EUR", "TRY"]);
+const validMover = (symbol: string, volume: number) => symbol.endsWith("USDT") && volume >= 1_000_000 && !ignoredBases.has(symbol.slice(0, -4)) && !/(UP|DOWN|BULL|BEAR)$/.test(symbol.slice(0, -4));
+
+async function getMarketMovers() {
+  const [binance, bybit] = await Promise.allSettled([
+    fetch("https://api.binance.com/api/v3/ticker/24hr", { cache: "force-cache", next: { revalidate: 45 } }).then(async (response) => {
+      if (!response.ok) throw new Error(`Binance: ${response.status}`);
+      return response.json() as Promise<{ symbol: string; lastPrice: string; priceChangePercent: string; quoteVolume: string }[]>;
+    }),
+    fetch("https://api.bybit.com/v5/market/tickers?category=spot", { cache: "force-cache", next: { revalidate: 45 } }).then(async (response) => {
+      if (!response.ok) throw new Error(`Bybit: ${response.status}`);
+      return response.json() as Promise<{ result?: { list?: { symbol: string; lastPrice: string; price24hPcnt: string; turnover24h: string }[] } }>;
+    }),
+  ]);
+  const rows: MarketMover[] = [];
+  if (binance.status === "fulfilled") rows.push(...binance.value.filter((item) => validMover(item.symbol, Number(item.quoteVolume))).map((item) => ({ symbol: item.symbol.slice(0, -4), exchange: "Binance" as const, price: Number(item.lastPrice), change: Number(item.priceChangePercent), volume: Number(item.quoteVolume) })));
+  if (bybit.status === "fulfilled") rows.push(...(bybit.value.result?.list ?? []).filter((item) => validMover(item.symbol, Number(item.turnover24h))).map((item) => ({ symbol: item.symbol.slice(0, -4), exchange: "Bybit" as const, price: Number(item.lastPrice), change: Number(item.price24hPcnt) * 100, volume: Number(item.turnover24h) })));
+  const deduped = [...rows.reduce((map, row) => {
+    const current = map.get(row.symbol); if (!current || row.volume > current.volume) map.set(row.symbol, row); return map;
+  }, new Map<string, MarketMover>()).values()];
+  return {
+    gainers: deduped.filter((row) => row.change > 0).sort((a, b) => b.change - a.change).slice(0, 20),
+    losers: deduped.filter((row) => row.change < 0).sort((a, b) => a.change - b.change).slice(0, 20),
+    partial: binance.status === "rejected" || bybit.status === "rejected",
+  };
+}
+
 export async function getDashboardData(): Promise<DashboardData> {
   const warnings: string[] = [];
   const config = await getAdminConfig();
@@ -127,11 +181,17 @@ export async function getDashboardData(): Promise<DashboardData> {
   if (midsResult.status === "rejected") warnings.push("Котировки временно недоступны");
   const catalog = marketsResult.status === "fulfilled" ? marketsResult.value : { markets: [], coinNames: {}, partial: true };
   if (marketsResult.status === "rejected" || catalog.partial) warnings.push("Часть live-рынков временно недоступна");
-  const pulse = wallets.length ? await getRecentFills(wallets, catalog.coinNames) : { tracked: [], fills: [] };
+  const [pulse, flow, movers] = await Promise.all([
+    wallets.length ? getRecentFills(wallets, catalog.coinNames) : Promise.resolve({ tracked: [], fills: [] }),
+    wallets.length ? getCoinFlow(wallets, catalog.coinNames) : Promise.resolve([]),
+    getMarketMovers().catch(() => ({ gainers: [], losers: [], partial: true })),
+  ]);
+  if (movers.partial) warnings.push("Часть данных Binance и Bybit временно недоступна");
   return {
     wallets, fills: pulse.fills, tracked: pulse.tracked,
     prices: Object.fromEntries(["BTC", "ETH", "SOL", "HYPE", "XRP", "DOGE"].map((coin) => [coin, Number(mids[coin] ?? 0)])),
     liveCoins: catalog.markets, coinNames: catalog.coinNames, tradeCoverage: wallets.length,
+    coinFlow: flow, marketMovers: { gainers: movers.gainers, losers: movers.losers },
     sourceCount: walletsResult.status === "fulfilled" ? walletsResult.value.sourceCount : 0, config,
     updatedAt: Date.now(), warnings,
   };
@@ -139,27 +199,42 @@ export async function getDashboardData(): Promise<DashboardData> {
 
 export async function getWalletDetail(address: string): Promise<WalletDetail> {
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error("Некорректный адрес кошелька");
-  const [state, fills, portfolio, spotMeta] = await Promise.all([
-    info<RawState>({ type: "clearinghouseState", user: address }, 20),
-    info<Fill[]>({ type: "userFills", user: address, aggregateByTime: true }, 30),
-    info<RawPortfolioEntry[]>({ type: "portfolio", user: address }, 60),
+  const [recentFills, portfolio, spotMeta, spotState] = await Promise.all([
+    info<Fill[]>({ type: "userFills", user: address, aggregateByTime: true }, 2),
+    info<RawPortfolioEntry[]>({ type: "portfolio", user: address }, 30),
     info<SpotMeta>({ type: "spotMeta" }, 3_600).catch(() => ({ universe: [], tokens: [] })),
+    info<RawSpotState>({ type: "spotClearinghouseState", user: address }, 2).catch(() => ({ balances: [] })),
   ]);
+  const fills = [...recentFills];
+  let page = recentFills;
+  while (page.length === 2_000 && fills.length < 6_000) {
+    const oldest = Math.min(...page.map((fill) => fill.time));
+    try { page = await info<Fill[]>({ type: "userFillsByTime", user: address, startTime: 0, endTime: oldest - 1, aggregateByTime: true }, 30); } catch { break; }
+    if (!page.length || Math.min(...page.map((fill) => fill.time)) >= oldest) break;
+    fills.push(...page);
+  }
+  // shortcut: query only DEXes present in recent fills; all-DEX live updates come from the wallet WebSocket.
+  const dexNames = ["", ...new Set(fills.flatMap((fill) => fill.coin.includes(":") ? [fill.coin.split(":", 1)[0]] : []))];
+  const stateResults = await Promise.allSettled(dexNames.map((dex) => info<RawState>({ type: "clearinghouseState", user: address, ...(dex ? { dex } : {}) }, 2)));
+  const states = stateResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
   const coinNames = spotCoinNames(spotMeta);
   const normalizedPortfolio = normalizePerpPortfolio(portfolio);
-  const normalizedFills = fills.slice(0, 1_000).map((fill) => ({
+  const normalizedFills = fills.map((fill) => ({
     coin: displayCoin(fill.coin, coinNames), px: fill.px, sz: fill.sz, side: fill.side, time: fill.time,
-    dir: fill.dir, closedPnl: fill.closedPnl, fee: fill.fee, hash: fill.hash,
+    dir: fill.dir, closedPnl: fill.closedPnl, fee: fill.fee, hash: fill.hash, startPosition: fill.startPosition,
   }));
+  const positions = states.flatMap((state) => state.assetPositions ?? []).map(({ position }) => ({
+    coin: displayCoin(position.coin, coinNames), size: Number(position.szi), entryPx: Number(position.entryPx), openedAt: positionOpenedAt(Number(position.szi), position.coin, fills),
+    positionValue: Number(position.positionValue), unrealizedPnl: Number(position.unrealizedPnl),
+    leverage: Number(position.leverage?.value ?? 1), liquidationPx: position.liquidationPx ? Number(position.liquidationPx) : null,
+  })).filter((position) => position.size).sort((a, b) => Math.abs(b.positionValue) - Math.abs(a.positionValue));
   return {
-    address, accountValue: Number(state.marginSummary?.accountValue ?? 0),
-    totalMarginUsed: Number(state.marginSummary?.totalMarginUsed ?? 0), withdrawable: Number(state.withdrawable ?? 0),
-    positions: (state.assetPositions ?? []).map(({ position }) => ({
-      coin: position.coin, size: Number(position.szi), entryPx: Number(position.entryPx),
-      positionValue: Number(position.positionValue), unrealizedPnl: Number(position.unrealizedPnl),
-      leverage: Number(position.leverage?.value ?? 1), liquidationPx: position.liquidationPx ? Number(position.liquidationPx) : null,
-    })),
-    fills: normalizedFills,
-    portfolio: normalizedPortfolio,
+    address, accountValue: states.reduce((sum, state) => sum + Number(state.marginSummary?.accountValue ?? 0), 0),
+    totalMarginUsed: states.reduce((sum, state) => sum + Number(state.marginSummary?.totalMarginUsed ?? 0), 0), withdrawable: states.reduce((sum, state) => sum + Number(state.withdrawable ?? 0), 0),
+    positions,
+    spotBalances: (spotState.balances ?? []).map((balance) => ({ coin: balance.coin, total: Number(balance.total), hold: Number(balance.hold) })).filter((balance) => balance.total || balance.hold).sort((a, b) => b.total - a.total),
+    fills: normalizedFills.slice(0, 1_000), closedTrades: closedTrades(normalizedFills).slice(0, 50),
+    positionHistoryStart: fills.length ? Math.min(...fills.map((fill) => fill.time)) : null,
+    portfolio: normalizedPortfolio, updatedAt: Date.now(),
   };
 }

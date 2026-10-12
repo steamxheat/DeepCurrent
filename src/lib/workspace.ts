@@ -16,13 +16,14 @@ export type ActivityFilters = {
   query: string;
   coin: string;
   action: "all" | "long" | "short" | "reduced";
+  source: "all" | "exact" | "market";
   favoritesOnly: boolean;
   minNotional: number;
   sort: "newest" | "largest";
 };
 
 export const defaultWalletFilters: WalletFilters = { query: "", performance: "all", minAccount: 0, minMonthPnl: 0, minRoi: 0, minVolume: 0, namedOnly: false, favoritesOnly: false, riskFreeOnly: false };
-export const defaultActivityFilters: ActivityFilters = { query: "", coin: "all", action: "all", favoritesOnly: false, minNotional: 0, sort: "newest" };
+export const defaultActivityFilters: ActivityFilters = { query: "", coin: "all", action: "all", source: "all", favoritesOnly: false, minNotional: 0, sort: "newest" };
 
 export function walletRiskFlags(wallet: WalletRow) {
   const flags: string[] = [];
@@ -81,6 +82,8 @@ export function filterActivity(fills: PulseFill[], filters: ActivityFilters, fav
     if (filters.action === "long" && !/long|buy/.test(direction)) return false;
     if (filters.action === "short" && !/short|sell/.test(direction)) return false;
     if (filters.action === "reduced" && !/close|reduce/.test(direction)) return false;
+    if (filters.source === "exact" && fill.source === "market") return false;
+    if (filters.source === "market" && fill.source !== "market") return false;
     if (filters.favoritesOnly && !favorites.has(fill.wallet)) return false;
     return notional >= filters.minNotional;
   }).sort((a, b) => filters.sort === "largest" ? Number(b.px) * Number(b.sz) - Number(a.px) * Number(a.sz) : b.time - a.time);
@@ -92,5 +95,5 @@ export function walletsCsv(wallets: WalletRow[]) {
 }
 
 export function fillsCsv(fills: PulseFill[]) {
-  return [["time", "wallet", "name", "coin", "direction", "price", "size", "notional", "closed_pnl", "fee", "hash"], ...fills.map((fill) => [new Date(fill.time).toISOString(), fill.wallet, fill.walletName, fill.coin, fill.dir, fill.px, fill.sz, Number(fill.px) * Number(fill.sz), fill.closedPnl, fill.fee, fill.hash])].map((row) => row.map(csvCell).join(",")).join("\n");
+  return [["time", "wallet", "name", "coin", "direction", "source", "price", "size", "notional_usd", "closed_pnl", "fee", "hash"], ...fills.map((fill) => [new Date(fill.time).toISOString(), fill.wallet, fill.walletName, fill.coin, fill.dir, fill.source === "market" ? "public_execution" : "exact_position", fill.px, fill.sz, Number(fill.px) * Number(fill.sz), fill.closedPnl, fill.fee, fill.hash])].map((row) => row.map(csvCell).join(",")).join("\n");
 }

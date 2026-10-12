@@ -41,7 +41,7 @@ async function mutate<T>(change: (state: State) => T | Promise<T>): Promise<T> {
   return task;
 }
 
-function identity(initData: string): TelegramIdentity | null {
+export function getSessionIdentity(initData: string): TelegramIdentity | null {
   if (!initData && process.env.NODE_ENV !== "production") return { id: "dev", firstName: "Local", lastName: "Admin", username: "local-dev" };
   return verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN ?? "");
 }
@@ -49,7 +49,7 @@ function identity(initData: string): TelegramIdentity | null {
 const seededAdmins = () => new Set((process.env.ADMIN_TELEGRAM_IDS ?? "").split(",").map((id) => id.trim()).filter(Boolean));
 
 export async function registerSession(initData: string) {
-  const actor = identity(initData);
+  const actor = getSessionIdentity(initData);
   if (!actor) return null;
   return mutate((state) => {
     const existing = state.users.find((user) => user.id === actor.id);
@@ -61,7 +61,7 @@ export async function registerSession(initData: string) {
 }
 
 async function requireAdmin(initData: string) {
-  const actor = identity(initData);
+  const actor = getSessionIdentity(initData);
   if (!actor) throw new Error("UNAUTHORIZED");
   const state = await readState();
   const isAdmin = actor.id === "dev" || seededAdmins().has(actor.id) || state.users.some((user) => user.id === actor.id && user.isAdmin);

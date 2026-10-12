@@ -1,4 +1,5 @@
 import type { PulseFill } from "./hyperliquid";
+import { classifyPositionChange } from "./notifications.ts";
 
 export type MarketTrade = {
   coin: string;
@@ -28,6 +29,18 @@ export function displayCoin(coin: string, names: Record<string, string>) {
   return names[coin] ?? coin;
 }
 
+export function marketIdentity(coin: string) {
+  if (coin.includes("/")) {
+    const [symbol, quote = "USDC"] = coin.split("/");
+    return { symbol, venue: `${quote} spot`, type: "SPOT" as const };
+  }
+  if (coin.includes(":")) {
+    const [dex, symbol] = coin.split(":", 2);
+    return { symbol, venue: `${dex.toUpperCase()} perpetual`, type: "PERP" as const };
+  }
+  return { symbol: coin, venue: "Hyperliquid perpetual", type: "PERP" as const };
+}
+
 export function tradeFills(trades: MarketTrade[], wallets: Map<string, string>, coinNames: Record<string, string>) {
   return trades.flatMap((trade): PulseFill[] => (trade.users ?? []).flatMap((user, index) => {
     const wallet = user.toLowerCase();
@@ -43,11 +56,17 @@ export function tradeFills(trades: MarketTrade[], wallets: Map<string, string>, 
   }));
 }
 
-export function activityKind(fill: Pick<PulseFill, "dir" | "side">) {
+export function activityKind(fill: Pick<PulseFill, "dir" | "side" | "source" | "startPosition" | "sz">) {
   const direction = fill.dir.toLowerCase();
-  if (direction.includes("close") || direction.includes("reduce")) return { label: "REDUCE", kind: "neutral" as const };
-  if (direction.includes("buy")) return { label: "BUY", kind: "gain" as const };
-  if (direction.includes("sell")) return { label: "SELL", kind: "loss" as const };
-  if (direction.includes("long") || (fill.side === "B" && !direction.includes("short"))) return { label: "LONG", kind: "gain" as const };
-  return { label: "SHORT", kind: "loss" as const };
+  const before = Number(fill.startPosition);
+  if (fill.source !== "market" && Number.isFinite(before)) {
+    const after = before + Number(fill.sz) * (fill.side === "B" ? 1 : -1);
+    const change = classifyPositionChange(before, Math.abs(after) < 1e-9 ? 0 : after);
+    if (change) return { label: change.action, direction: change.direction, exact: true, kind: ["REDUCE", "CLOSE"].includes(change.action) ? "neutral" as const : change.direction === "LONG" ? "gain" as const : "loss" as const };
+  }
+  if (direction.includes("close") || direction.includes("reduce")) return { label: "REDUCE", direction: direction.includes("short") ? "SHORT" as const : "LONG" as const, exact: fill.source !== "market", kind: "neutral" as const };
+  if (direction.includes("buy")) return { label: "BUY", direction: "BUY" as const, exact: false, kind: "gain" as const };
+  if (direction.includes("sell")) return { label: "SELL", direction: "SELL" as const, exact: false, kind: "loss" as const };
+  if (direction.includes("long") || (fill.side === "B" && !direction.includes("short"))) return { label: "OPEN", direction: "LONG" as const, exact: fill.source !== "market", kind: "gain" as const };
+  return { label: "OPEN", direction: "SHORT" as const, exact: fill.source !== "market", kind: "loss" as const };
 }

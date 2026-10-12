@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { computeFillStats, findConfluences, type Fill } from "./stats.ts";
+import { closedTrades, computeFillStats, findConfluences, positionOpenedAt, type Fill } from "./stats.ts";
 
 const fill = (overrides: Partial<Fill>): Fill => ({
   coin: "BTC", px: "100", sz: "1", side: "B", time: 1_000, dir: "Open Long",
@@ -23,4 +23,34 @@ test("confluence requires two unique wallets in the same market and direction", 
   ], 1_000, 500);
   assert.equal(result.length, 1);
   assert.deepEqual(result[0].wallets.sort(), ["0x1", "0x2"]);
+});
+
+test("position opening time survives later additions and reductions", () => {
+  const fills = [
+    fill({ time: 100, sz: "4", side: "B" }),
+    fill({ time: 200, sz: "3", side: "B" }),
+    fill({ time: 300, sz: "2", side: "A", dir: "Close Long" }),
+  ];
+  assert.equal(positionOpenedAt(5, "BTC", fills), 100);
+});
+
+test("position opening time is the fill that flipped its direction", () => {
+  const fills = [fill({ time: 100, sz: "10", side: "B", dir: "Open Long" })];
+  assert.equal(positionOpenedAt(5, "BTC", fills), 100);
+});
+
+test("closed trades combine partial reductions and preserve duration", () => {
+  const result = closedTrades([
+    fill({ time: 100, sz: "4", side: "B", startPosition: "0", px: "100", fee: "-1" }),
+    fill({ time: 200, sz: "1", side: "A", startPosition: "4", px: "110", dir: "Close Long", closedPnl: "10", fee: "-1" }),
+    fill({ time: 300, sz: "3", side: "A", startPosition: "3", px: "120", dir: "Close Long", closedPnl: "60", fee: "-1" }),
+  ]);
+  assert.equal(result.length, 1);
+  assert.deepEqual(result[0], { coin: "BTC", direction: "LONG", openedAt: 100, closedAt: 300, entryPx: 100, exitPx: 117.5, size: 4, netPnl: 67 });
+});
+
+test("closed trades mark an opening before available history as unknown", () => {
+  const [trade] = closedTrades([fill({ time: 300, sz: "2", side: "B", startPosition: "-2", dir: "Close Short", closedPnl: "5" })]);
+  assert.equal(trade.openedAt, null);
+  assert.equal(trade.direction, "SHORT");
 });
