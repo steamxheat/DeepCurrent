@@ -19,7 +19,7 @@ async function telegram(method, body) {
 
 async function send(chatId, text, withApp = false) {
   const replyMarkup = withApp && appUrl?.startsWith("https://")
-    ? { inline_keyboard: [[{ text: "Открыть DC Pulse", web_app: { url: appUrl } }]] }
+    ? { inline_keyboard: [[{ text: "Открыть Deep Current", web_app: { url: appUrl } }]] }
     : undefined;
   return telegram("sendMessage", { chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true, reply_markup: replyMarkup });
 }
@@ -36,7 +36,7 @@ async function leaderboard() {
 async function command(message) {
   const chatId = message.chat.id;
   const text = (message.text || "").split("@")[0].trim().toLowerCase();
-  if (text === "/start") return send(chatId, "<b>DC Pulse</b> отслеживает публичные сделки сильных кошельков Hyperliquid.\n\nБез копитрейдинга и обещаний доходности — только данные.", true);
+  if (text === "/start") return send(chatId, "<b>Deep Current</b> отслеживает публичные сделки сильных кошельков Hyperliquid.\n\nБез копитрейдинга и обещаний доходности — только данные.", true);
   if (text === "/watch") {
     watchers.add(chatId);
     return send(chatId, "Live-уведомления включены для этого чата. Команда /stop отключит их.", true);
@@ -90,12 +90,12 @@ async function monitor() {
 }
 
 await telegram("setMyCommands", { commands: [
-  { command: "start", description: "Открыть DC Pulse" },
+  { command: "start", description: "Открыть Deep Current" },
   { command: "top", description: "Лидеры дня" },
   { command: "watch", description: "Включить live-уведомления" },
   { command: "stop", description: "Отключить уведомления" },
 ] });
-console.log("DC Pulse bot started");
+console.log("Deep Current bot started");
 setInterval(monitor, 60_000);
 process.on("SIGINT", () => { running = false; process.exit(0); });
 await poll();

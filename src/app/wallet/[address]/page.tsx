@@ -31,10 +31,10 @@ async function LiveWallet({ params }: { params: Promise<{ address: string }> }) 
 
   return <main className="mx-auto min-h-dvh w-full max-w-[1540px] px-3 py-3 pb-12 sm:px-6 sm:py-6">
     <header className="mb-4 flex items-center justify-between px-1">
-      <Link href="/" aria-label="Вернуться в DC Pulse" className="inline-flex min-h-11 items-center gap-2.5 rounded-lg pr-3 text-sm text-[var(--muted)] transition-colors hover:bg-white/[.04] hover:text-white">
+      <Link href="/" aria-label="Вернуться в Deep Current" className="inline-flex min-h-11 items-center gap-2.5 rounded-lg pr-3 text-sm text-[var(--muted)] transition-colors hover:bg-white/[.04] hover:text-white">
         <span className="flex size-11 items-center justify-center" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m15 18-6-6 6-6"/></svg></span>
         <span className="relative size-9 shrink-0 overflow-hidden rounded-lg border border-white/[.08] bg-[#02060c]"><Image src="/dc-pulse-mark.png" fill sizes="36px" alt="" className="object-cover" priority/></span>
-        <span className="hidden font-medium text-white sm:inline">DC Pulse</span>
+        <span className="hidden font-medium text-white sm:inline">Deep Current</span>
       </Link>
       <span className="flex items-center gap-2 rounded-full border border-white/[.08] bg-white/[.035] px-3 py-2 text-[11px] text-[var(--cyan)]"><i className="live-dot size-1.5 rounded-full bg-[var(--cyan)]"/>LIVE DATA</span>
     </header>

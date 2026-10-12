@@ -1,5 +1,5 @@
 ---
-name: DC Pulse
+name: Deep Current
 description: A compact intelligence terminal for comparing curated strong Hyperliquid traders.
 colors:
   terminal-black: "#060910"
@@ -13,6 +13,18 @@ colors:
   loss-red: "#ff6888"
   warning-amber: "#ffc466"
 typography:
+  intro:
+    fontFamily: "Geist, system-ui, sans-serif"
+    fontSize: "48px"
+    fontWeight: 550
+    lineHeight: 1
+    letterSpacing: "-0.035em"
+  intro-mobile:
+    fontFamily: "Geist, system-ui, sans-serif"
+    fontSize: "32px"
+    fontWeight: 550
+    lineHeight: 1
+    letterSpacing: "-0.035em"
   headline:
     fontFamily: "Geist, system-ui, sans-serif"
     fontSize: "24px"
@@ -114,13 +126,13 @@ components:
     width: "46px"
 ---
 
-# Design System: DC Pulse
+# Design System: Deep Current
 
 ## Overview
 
 **Creative North Star: "The Curated Intelligence Terminal"**
 
-DC Pulse is a compact, HyperStats-like intelligence terminal for a curated set of strong traders. It should feel near-black, flat, dense, restrained, and built for repeated professional use: the interface gets out of the way while evidence, comparisons, and live actions remain immediately scannable.
+Deep Current is a compact, HyperStats-like intelligence terminal for a curated set of strong traders. It should feel near-black, flat, dense, restrained, and built for repeated professional use: the interface gets out of the way while evidence, comparisons, and live actions remain immediately scannable.
 
 The visual system expresses confidence through disciplined hierarchy rather than decoration. The turquoise ribbon mark is the primary identity asset, while cyan is reserved for positive, live, and selected states. Oversized pill controls, inflated card dashboards, excessive gradients, glass effects, and loose spacing are explicit anti-references.
 
@@ -181,7 +193,7 @@ The palette is a cold near-black neutral field with scarce, semantic signals rat
 
 **The Data Has a Different Voice Rule.** Financial values and addresses use Geist Mono; explanatory language stays in Geist.
 
-**The No Hero Type Rule.** This is an operating terminal, so headings establish hierarchy without displacing data from the first viewport.
+**The No Hero Type Rule.** This is an operating terminal, so headings establish hierarchy without displacing data from the first viewport. The one exception is the transient 2.5-second brand intro, which uses the dedicated intro scale.
 
 ## Layout
 

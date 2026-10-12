@@ -1,4 +1,4 @@
-# DC Pulse MVP
+# Deep Current MVP
 
 Telegram Mini App для просмотра публичной статистики, позиций и сделок кошельков Hyperliquid.
 

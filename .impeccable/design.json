@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "generatedAt": "2026-10-12T00:32:00Z",
-  "title": "Design System: DC Pulse",
+  "title": "Design System: Deep Current",
   "extensions": {
     "colorMeta": {
       "terminal-black": {
@@ -66,6 +66,14 @@
       }
     },
     "typographyMeta": {
+      "intro": {
+        "displayName": "Intro",
+        "purpose": "Desktop wordmark in the transient startup animation."
+      },
+      "intro-mobile": {
+        "displayName": "Intro Mobile",
+        "purpose": "Mobile wordmark in the transient startup animation."
+      },
       "headline": {
         "displayName": "Headline",
         "purpose": "Compact page-level trader and wallet headings."
@@ -210,7 +218,7 @@
   ],
   "narrative": {
     "northStar": "The Curated Intelligence Terminal",
-    "overview": "DC Pulse is a compact, HyperStats-like intelligence terminal for a curated set of strong traders. It should feel near-black, flat, dense, restrained, and built for repeated professional use: the interface gets out of the way while evidence, comparisons, and live actions remain immediately scannable.\n\nThe visual system expresses confidence through disciplined hierarchy rather than decoration. The turquoise ribbon mark is the primary identity asset, while cyan is reserved for positive, live, and selected states. Oversized pill controls, inflated card dashboards, excessive gradients, glass effects, and loose spacing are explicit anti-references.",
+    "overview": "Deep Current is a compact, HyperStats-like intelligence terminal for a curated set of strong traders. It should feel near-black, flat, dense, restrained, and built for repeated professional use: the interface gets out of the way while evidence, comparisons, and live actions remain immediately scannable.\n\nThe visual system expresses confidence through disciplined hierarchy rather than decoration. The turquoise ribbon mark is the primary identity asset, while cyan is reserved for positive, live, and selected states. Oversized pill controls, inflated card dashboards, excessive gradients, glass effects, and loose spacing are explicit anti-references.",
     "keyCharacteristics": [
       "Near-black terminal surfaces separated by hairline rules.",
       "Compact controls and dense data rows with clear alignment.",

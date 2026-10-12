@@ -1,4 +1,4 @@
-# Развёртывание DC Pulse на Mac mini
+# Развёртывание Deep Current на Mac mini
 
 Инструкция рассчитана на один Mac mini с macOS, один экземпляр Next.js и Telegram-бота. Для Telegram Mini App обязательно нужен публичный HTTPS-адрес.
 
