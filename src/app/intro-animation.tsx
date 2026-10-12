@@ -1,6 +1,17 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
 export function IntroAnimation() {
+  const [started, setStarted] = useState(false);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setStarted(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
   return (
-    <div className="intro-animation" aria-hidden="true">
+    <div className={`intro-animation${started ? " is-running" : ""}`} aria-hidden="true">
       <svg className="intro-current" viewBox="0 0 640 120" role="presentation">
         <path
           className="intro-wave intro-wave-left"
