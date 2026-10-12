@@ -14,9 +14,9 @@ const download = (name: string, content: string) => {
   URL.revokeObjectURL(link.href);
 };
 
-export function AdminPanel({ initData, wallets, exactLiveWallets, marketCoverage, live, events, updatedAt }: {
+export function AdminPanel({ initData, liveWallets, exactLiveWallets, marketCoverage, live, events, updatedAt }: {
   initData: string;
-  wallets: number;
+  liveWallets: number;
   exactLiveWallets: number;
   marketCoverage: number;
   live: boolean;
@@ -70,7 +70,7 @@ export function AdminPanel({ initData, wallets, exactLiveWallets, marketCoverage
     {error && <div role="alert" className="border border-[#ff688855] bg-[#ff68880b] px-4 py-3 text-xs text-[var(--loss)]">{error}</div>}
     <section className="surface overflow-hidden">
       <div className="grid grid-cols-2 border-b border-[var(--line)] sm:grid-cols-4 xl:grid-cols-8">
-        <Metric label="Пользователи" value={String(snapshot?.users.length ?? 0)}/><Metric label="Админы" value={String(snapshot?.users.filter((user) => user.isAdmin).length ?? 0)}/><Metric label="Активны 24H" value={String(activeToday)}/><Metric label="Новые 7D" value={String(newThisWeek)}/><Metric label="Кошельки" value={String(wallets)} accent/><Metric label="Exact live" value={`${exactLiveWallets}/10`}/><Metric label="Рынки" value={String(marketCoverage)}/><Metric label="События" value={String(events)}/>
+        <Metric label="Пользователи" value={String(snapshot?.users.length ?? 0)}/><Metric label="Админы" value={String(snapshot?.users.filter((user) => user.isAdmin).length ?? 0)}/><Metric label="Активны 24H" value={String(activeToday)}/><Metric label="Новые 7D" value={String(newThisWeek)}/><Metric label="Live wallets" value={String(liveWallets)} accent/><Metric label="Exact events" value={String(exactLiveWallets)}/><Metric label="Рынки" value={String(marketCoverage)}/><Metric label="События" value={String(events)}/>
       </div>
       <div className="grid lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="border-b border-[var(--line)] lg:border-b-0 lg:border-r">
@@ -85,11 +85,11 @@ export function AdminPanel({ initData, wallets, exactLiveWallets, marketCoverage
         <aside>
           <SectionHead title="Парсер" note="Лимиты и фактическое состояние"/>
           <div className="space-y-4 p-4">
-            <ConfigSelect label="Размер рейтинга" value={snapshot?.config.trackedWallets ?? 200} disabled={Boolean(busy)} onChange={(value) => setConfig("trackedWallets", value)} options={[[100, "100"], [200, "200"], [300, "300"], [500, "500"]]}/>
+            <ConfigSelect label="Размер рейтинга" value={snapshot?.config.trackedWallets ?? 500} disabled={Boolean(busy)} onChange={(value) => setConfig("trackedWallets", value)} options={[[100, "100"], [200, "200"], [300, "300"], [500, "500"]]}/>
             <ConfigSelect label="Минимум сигнала" value={snapshot?.config.signalThreshold ?? 5000} disabled={Boolean(busy)} onChange={(value) => setConfig("signalThreshold", value)} options={[[1000, "$1K"], [5000, "$5K"], [10000, "$10K"], [25000, "$25K"], [50000, "$50K"]]}/>
-            <ConfigSelect label="Live-рынки" value={snapshot?.config.liveMarkets ?? 24} disabled={Boolean(busy)} onChange={(value) => setConfig("liveMarkets", value)} options={[[8, "8"], [16, "16"], [24, "24"], [32, "32"], [40, "40"]]}/>
+            <ConfigSelect label="Live-рынки" value={snapshot?.config.liveMarkets ?? 900} disabled={Boolean(busy)} onChange={(value) => setConfig("liveMarkets", value)} options={[[100, "100"], [300, "300"], [600, "600"], [900, "Все доступные"]]}/>
             <ConfigSelect label="Окно совпадений" value={snapshot?.config.confluenceMinutes ?? 30} disabled={Boolean(busy)} onChange={(value) => setConfig("confluenceMinutes", value)} options={[[5, "5 мин"], [15, "15 мин"], [30, "30 мин"], [60, "60 мин"], [120, "120 мин"]]}/>
-            <p className="text-[10px] leading-4 text-[var(--muted)]">Настройки применяются после обновления страницы.</p>
+            <p className="text-[10px] leading-4 text-[var(--muted)]">Все кошельки отслеживаются через публичные market trades. Для {exactLiveWallets} самых активных дополнительно доступны точные Open/Close и PnL — это лимит API на один IP. Настройки применяются после обновления.</p>
             <dl className="space-y-3 border-t border-[var(--line)] pt-4"><Row label="WebSocket" value={live ? "Подключён" : "Переподключение"} tone={live ? "gain" : "loss"}/><Row label="Leaderboard" value="Hyperliquid"/><Row label="Цены" value="allMids live"/><Row label="Сделки" value="userFills + trades"/><Row label="Обновлено" value={new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(updatedAt)}/></dl>
             <button onClick={() => location.reload()} className="h-10 w-full rounded-md bg-[var(--cyan)] text-xs font-semibold text-[#041110] transition-opacity hover:opacity-90">Применить и обновить</button>
           </div>

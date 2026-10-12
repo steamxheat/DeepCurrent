@@ -16,7 +16,7 @@ test("wallet workspace filters, sorts and summarizes consistently", () => {
 });
 
 test("activity workspace filters by size and direction", () => {
-  const result = filterActivity([fill(), fill({ hash: "s", dir: "Open Short", sz: "1" })], { ...defaultActivityFilters, action: "long", minNotional: 1_000 }, new Set());
-  assert.equal(result.length, 1);
+  const result = filterActivity([fill(), fill({ hash: "b", dir: "Buy" }), fill({ hash: "s", dir: "Open Short", sz: "1" })], { ...defaultActivityFilters, action: "long", minNotional: 1_000 }, new Set());
+  assert.equal(result.length, 2);
   assert.equal(result[0].dir, "Open Long");
 });

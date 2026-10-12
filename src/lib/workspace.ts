@@ -78,9 +78,9 @@ export function filterActivity(fills: PulseFill[], filters: ActivityFilters, fav
     const notional = Number(fill.px) * Number(fill.sz);
     if (query && !`${fill.coin} ${fill.walletName} ${fill.wallet}`.toLowerCase().includes(query)) return false;
     if (filters.coin !== "all" && fill.coin !== filters.coin) return false;
-    if (filters.action === "long" && !direction.includes("long")) return false;
-    if (filters.action === "short" && !direction.includes("short")) return false;
-    if (filters.action === "reduced" && !direction.includes("close")) return false;
+    if (filters.action === "long" && !/long|buy/.test(direction)) return false;
+    if (filters.action === "short" && !/short|sell/.test(direction)) return false;
+    if (filters.action === "reduced" && !/close|reduce/.test(direction)) return false;
     if (filters.favoritesOnly && !favorites.has(fill.wallet)) return false;
     return notional >= filters.minNotional;
   }).sort((a, b) => filters.sort === "largest" ? Number(b.px) * Number(b.sz) - Number(a.px) * Number(a.sz) : b.time - a.time);
