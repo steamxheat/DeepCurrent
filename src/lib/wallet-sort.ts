@@ -1,7 +1,7 @@
 import type { Position } from "./hyperliquid";
 import type { ClosedTrade, Fill } from "./stats";
 
-export type PositionSort = "time-desc" | "time-asc" | "notional-desc" | "notional-asc" | "pnl-desc" | "pnl-asc" | "entry-desc" | "entry-asc";
+export type PositionSort = "time-desc" | "time-asc" | "duration-desc" | "duration-asc" | "notional-desc" | "notional-asc" | "pnl-desc" | "pnl-asc" | "roi-desc" | "roi-asc" | "entry-desc" | "entry-asc";
 export type ClosedSort = "time-desc" | "time-asc" | "duration-desc" | "duration-asc" | "pnl-desc" | "pnl-asc" | "exit-desc" | "exit-asc";
 export type FillSort = "time-desc" | "time-asc" | "notional-desc" | "notional-asc" | "price-desc" | "price-asc";
 
@@ -12,16 +12,27 @@ const nullableTime = (a: number | null, b: number | null, direction: 1 | -1) => 
 };
 
 export function sortPositions(rows: Position[], sort: PositionSort) {
-  const [field, order] = sort.split("-") as ["time" | "notional" | "pnl" | "entry", "asc" | "desc"];
+  const [field, order] = sort.split("-") as ["time" | "duration" | "notional" | "pnl" | "roi" | "entry", "asc" | "desc"];
   const direction = order === "asc" ? 1 : -1;
-  return [...rows].sort((a, b) => field === "time" ? nullableTime(a.openedAt, b.openedAt, direction)
+  const roi = (row: Position) => row.marginUsed && row.marginUsed > 0 ? row.unrealizedPnl / row.marginUsed * 100 : null;
+  return [...rows].sort((a, b) => field === "time" || field === "duration" ? nullableTime(a.openedAt, b.openedAt, field === "duration" ? -direction as 1 | -1 : direction)
+    : field === "roi" ? nullableTime(roi(a), roi(b), direction)
     : direction * ((field === "notional" ? Math.abs(a.positionValue) : field === "pnl" ? a.unrealizedPnl : a.entryPx) - (field === "notional" ? Math.abs(b.positionValue) : field === "pnl" ? b.unrealizedPnl : b.entryPx)));
+}
+
+export function filterPositions(rows: Position[], filters: { coin: string; side: string; exactOnly: boolean; source?: string; action?: string }) {
+  return rows.filter((row) => (!filters.coin || row.coin.toLowerCase().includes(filters.coin.trim().toLowerCase()))
+    && (filters.side === "all" || (row.size > 0 ? "LONG" : "SHORT") === filters.side)
+    && (!filters.exactOnly || row.openedAt !== null)
+    && (!filters.source || filters.source === "all" || row.source === filters.source)
+    && (!filters.action || filters.action === "all" || row.lastAction === filters.action));
 }
 
 export function sortClosedTrades(rows: ClosedTrade[], sort: ClosedSort) {
   const [field, order] = sort.split("-") as ["time" | "duration" | "pnl" | "exit", "asc" | "desc"];
   const direction = order === "asc" ? 1 : -1;
-  return [...rows].sort((a, b) => direction * ((field === "time" ? a.closedAt : field === "duration" ? (a.openedAt === null ? -1 : a.closedAt - a.openedAt) : field === "pnl" ? a.netPnl : a.exitPx) - (field === "time" ? b.closedAt : field === "duration" ? (b.openedAt === null ? -1 : b.closedAt - b.openedAt) : field === "pnl" ? b.netPnl : b.exitPx)));
+  return [...rows].sort((a, b) => field === "duration" ? nullableTime(a.openedAt === null ? null : a.closedAt - a.openedAt, b.openedAt === null ? null : b.closedAt - b.openedAt, direction)
+    : nullableTime(field === "time" ? a.closedAt : field === "pnl" ? Number.isFinite(a.netPnl) ? a.netPnl : null : a.exitPx, field === "time" ? b.closedAt : field === "pnl" ? Number.isFinite(b.netPnl) ? b.netPnl : null : b.exitPx, direction));
 }
 
 export function sortFills(rows: Fill[], sort: FillSort) {

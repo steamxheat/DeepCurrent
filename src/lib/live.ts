@@ -1,5 +1,5 @@
 import type { PulseFill } from "./hyperliquid";
-import { classifyPositionChange } from "./notifications.ts";
+import { fillTransition } from "./position-reducer.ts";
 
 export type MarketTrade = {
   coin: string;
@@ -30,6 +30,7 @@ export function displayCoin(coin: string, names: Record<string, string>) {
 }
 
 export function marketIdentity(coin: string) {
+  if (coin.startsWith("#")) return { symbol: coin, venue: "Outcome market", type: "SPOT" as const };
   if (coin.includes("/")) {
     const [symbol, quote = "USDC"] = coin.split("/");
     return { symbol, venue: `${quote} spot`, type: "SPOT" as const };
@@ -51,6 +52,7 @@ export function tradeFills(trades: MarketTrade[], wallets: Map<string, string>, 
       side: index === 0 ? "B" : "A", time: trade.time,
       dir: index === 0 ? "Buy" : "Sell", closedPnl: "0", fee: "0",
       hash: trade.hash ?? String(trade.tid ?? `${trade.coin}:${trade.time}`),
+      tid: trade.tid,
       wallet, walletName, source: "market",
     }];
   }));
@@ -59,9 +61,9 @@ export function tradeFills(trades: MarketTrade[], wallets: Map<string, string>, 
 export function mergePulseFills(current: PulseFill[], incoming: PulseFill[]) {
   const rows = new Map<string, PulseFill>();
   for (const fill of [...current, ...incoming]) {
-    const key = `${fill.wallet}:${fill.hash}:${fill.time}:${fill.coin}:${fill.px}:${fill.sz}`;
+    const key = fill.tid === undefined ? `${fill.wallet}:${fill.hash}:${fill.time}:${fill.coin}:${fill.px}:${fill.sz}` : `${fill.wallet.toLowerCase()}:${fill.coin}:${fill.time}:${fill.tid}`;
     const previous = rows.get(key);
-    if (!previous || (previous.source === "market" && fill.source !== "market")) rows.set(key, fill);
+    if (!previous || previous.source === "market" || fill.source !== "market") rows.set(key, fill);
   }
   const sorted = [...rows.values()].sort((a, b) => b.time - a.time);
   const exactCounts = new Map<string, number>();
@@ -75,17 +77,15 @@ export function mergePulseFills(current: PulseFill[], incoming: PulseFill[]) {
   return [...exact, ...market].sort((a, b) => b.time - a.time);
 }
 
-export function activityKind(fill: Pick<PulseFill, "dir" | "side" | "source" | "startPosition" | "sz">) {
+export function activityKind(fill: Pick<PulseFill, "dir" | "side" | "source" | "startPosition" | "sz" | "action" | "direction">) {
+  if (fill.action && fill.direction && fill.source !== "market" && fill.startPosition !== undefined) return { label: fill.action, direction: fill.direction, exact: !["BUY", "SELL"].includes(fill.action), kind: ["REDUCE", "CLOSE"].includes(fill.action) ? "neutral" as const : fill.direction === "LONG" || fill.direction === "BUY" ? "gain" as const : "loss" as const };
   const direction = fill.dir.toLowerCase();
-  const before = Number(fill.startPosition);
-  if (fill.source !== "market" && Number.isFinite(before)) {
-    const after = before + Number(fill.sz) * (fill.side === "B" ? 1 : -1);
-    const change = classifyPositionChange(before, Math.abs(after) < 1e-9 ? 0 : after);
+  if (fill.source !== "market" && fill.startPosition !== undefined) {
+    const change = fillTransition({ ...fill, coin: direction.includes("buy") || direction.includes("sell") ? "@spot" : "perp", time: 0 });
     if (change) return { label: change.action, direction: change.direction, exact: true, kind: ["REDUCE", "CLOSE"].includes(change.action) ? "neutral" as const : change.direction === "LONG" ? "gain" as const : "loss" as const };
   }
-  if (direction.includes("close") || direction.includes("reduce")) return { label: "REDUCE", direction: direction.includes("short") ? "SHORT" as const : "LONG" as const, exact: fill.source !== "market", kind: "neutral" as const };
+  if (direction.includes("close") || direction.includes("reduce")) return { label: direction.includes("close") ? "CLOSE" : "REDUCE", direction: direction.includes("short") ? "SHORT" as const : "LONG" as const, exact: false, kind: "neutral" as const };
   if (direction.includes("buy")) return { label: "BUY", direction: "BUY" as const, exact: false, kind: "gain" as const };
   if (direction.includes("sell")) return { label: "SELL", direction: "SELL" as const, exact: false, kind: "loss" as const };
-  if (direction.includes("long") || (fill.side === "B" && !direction.includes("short"))) return { label: "OPEN", direction: "LONG" as const, exact: fill.source !== "market", kind: "gain" as const };
-  return { label: "OPEN", direction: "SHORT" as const, exact: fill.source !== "market", kind: "loss" as const };
+  return { label: fill.side === "B" ? "BUY" : "SELL", direction: fill.side === "B" ? "BUY" as const : "SELL" as const, exact: false, kind: fill.side === "B" ? "gain" as const : "loss" as const };
 }

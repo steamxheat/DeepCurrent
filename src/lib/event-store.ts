@@ -1,6 +1,4 @@
-import { mkdirSync } from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { getDatabase } from "./database.ts";
 import type { CopyDelay, CopySample } from "./copyability.ts";
 import type { ClosedTrade } from "./stats.ts";
 import type { WalletScreening } from "./wallet-screening.ts";
@@ -30,9 +28,7 @@ type FundingRow = { event_key: string; wallet: string; coin: string; occurred_at
 type ClosedTradeRow = { wallet: string; coin: string; direction: "LONG" | "SHORT"; opened_at: number | null; closed_at: number; entry_px: number | null; exit_px: number; size: number; net_pnl: number };
 type ScreeningRow = { address: string; platform: "hyperliquid"; window_days: 60; trades: number; wins: number; win_rate: number; net_pnl: number; volume: number; last_active: number; score: number; history_complete: number; qualifies: number; reason: string; screened_at: number };
 
-const databasePath = process.env.DEEPCURRENT_DB_PATH || path.join(process.cwd(), ".data", "deep-current.sqlite");
-mkdirSync(path.dirname(databasePath), { recursive: true });
-const db = new DatabaseSync(databasePath);
+const db = getDatabase();
 db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA busy_timeout = 5000;

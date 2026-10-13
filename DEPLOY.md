@@ -1,5 +1,7 @@
 # Развёртывание Deep Current на Mac mini
 
+Для нового журнала сначала следовать [shadow-rollout](docs/journal-rollout.md): обычный `git pull` + restart без проверки режима недостаточен. Действующий сервер работает на Ubuntu; следующие Homebrew-команды относятся только к macOS, не к нему. Production-переключение этапов 2–6 ещё не выполнено.
+
 Инструкция рассчитана на один Mac mini с macOS, один экземпляр Next.js и Telegram-бота. Для Telegram Mini App обязательно нужен публичный HTTPS-адрес.
 
 ## 1. Подготовить Mac mini
@@ -50,12 +52,18 @@ APP_URL=https://pulse.example.com
 ADMIN_TELEGRAM_IDS=123456789
 DEEPCURRENT_DB_PATH=.data/deep-current.sqlite
 CONFLUENCE_WINDOW_MS=900000
+TRACKED_WALLETS=1000
+VAPID_PUBLIC_KEY=ПУБЛИЧНЫЙ_VAPID_КЛЮЧ
+VAPID_PRIVATE_KEY=ПРИВАТНЫЙ_VAPID_КЛЮЧ
+VAPID_SUBJECT=mailto:notifications@pulse.example.com
 ```
 
 - Старый токен, который отправлялся в чат, нужно отозвать в BotFather и выпустить заново.
 - Collector продолжит собирать позиции без `TELEGRAM_BOT_TOKEN`, но Telegram-бот, уведомления и авторизация админов без него работать не будут.
 - `ADMIN_TELEGRAM_IDS` — числовые Telegram ID администраторов через запятую.
 - Никогда не добавлять `.env.local` в Git: файл уже исключён через `.gitignore`.
+- VAPID-ключи генерируются один раз командой `npx web-push generate-vapid-keys`; при их замене пользователям придётся снова включить Web Push.
+- Web Push требует HTTPS. На iPhone/iPad пользователь сначала добавляет приложение на главный экран.
 
 ## 4. Проверить и собрать
 

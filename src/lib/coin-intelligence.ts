@@ -15,7 +15,7 @@ export function baseMarketSymbol(coin: string) {
 export function coinFlowChange(events: JournalEvent[], now: number, duration: number): FlowChange {
   let long = 0; let short = 0; const wallets = new Set<string>();
   for (const event of events) {
-    if (event.time > now || now - event.time > duration || !["LONG", "SHORT"].includes(event.direction ?? "")) continue;
+    if (event.time > now || now - event.time > duration || !["OPEN", "ADD", "REDUCE", "CLOSE", "FLIP"].includes(event.action) || !["LONG", "SHORT"].includes(event.direction ?? "")) continue;
     let longDelta = 0; let shortDelta = 0;
     if (event.beforeSize !== undefined && event.afterSize !== undefined && event.price !== undefined) {
       longDelta = (Math.max(0, event.afterSize) - Math.max(0, event.beforeSize)) * event.price;
@@ -32,6 +32,7 @@ export function coinFlowChange(events: JournalEvent[], now: number, duration: nu
 export function coinParticipants(events: JournalEvent[], snapshots: PositionSnapshot[], now: number, duration = 86_400_000): CoinParticipant[] {
   const rows = new Map<string, CoinParticipant>();
   for (const snapshot of snapshots) {
+    if (snapshot.size === 0) continue;
     const direction = snapshot.size > 0 ? "LONG" : "SHORT";
     rows.set(snapshot.wallet, { wallet: snapshot.wallet, direction, notional: Math.abs(snapshot.positionValue), lastTime: snapshot.capturedAt, events: 0, kind: "position", unrealizedPnl: snapshot.unrealizedPnl });
   }

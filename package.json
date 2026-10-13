@@ -10,25 +10,34 @@
     "lint": "eslint",
     "test": "node --experimental-strip-types --test src/lib/*.test.ts",
     "check:live": "node scripts/check-live.mjs",
+    "backup:db": "node --experimental-strip-types scripts/backup-db.mjs",
+    "benchmark:journal": "node --experimental-strip-types scripts/benchmark-journal.mjs",
+    "check:realtime": "node --experimental-strip-types scripts/check-realtime.mjs",
+    "check:journal": "node scripts/check-journal.mjs",
+    "report:collector": "node --experimental-strip-types scripts/report-collector.mjs",
     "discover:wallets": "node --experimental-strip-types scripts/discover-wallets.mjs",
     "export:wallets": "node --experimental-strip-types scripts/export-wallet-registry.mjs",
-    "bot": "node --experimental-strip-types scripts/bot.mjs",
-    "collector": "node --experimental-strip-types scripts/bot.mjs"
+    "bot": "node --experimental-strip-types scripts/collector.mjs",
+    "collector": "node --experimental-strip-types scripts/collector.mjs"
   },
   "dependencies": {
     "next": "16.4.0",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^24.19.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/web-push": "^3.6.4",
     "eslint": "^9",
     "eslint-config-next": "16.4.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   },
-  "engines": { "node": ">=22.5" }
+  "engines": {
+    "node": ">=22.23.3"
+  }
 }

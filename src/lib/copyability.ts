@@ -1,5 +1,6 @@
 import type { ClosedTrade, Fill } from "./stats.ts";
 import type { ChartPoint } from "./chart.ts";
+import { feeInUsd } from "./stats.ts";
 
 export type CopyDelay = 1 | 3 | 10 | 30;
 export type CopySample = { delay: CopyDelay; adverseBps: number };
@@ -51,7 +52,7 @@ export function copyabilityScore(input: {
   marketVolumes?: Record<string, number>;
   samples?: CopySample[];
 }): CopyabilityAnalysis {
-  const fills = input.fills.filter((fill) => Number.isFinite(Number(fill.px)) && Number.isFinite(Number(fill.sz)));
+  const fills = input.fills.filter((fill) => !fill.coin.startsWith("@") && !fill.coin.startsWith("#") && !fill.coin.includes("/") && Number.isFinite(Number(fill.px)) && Number.isFinite(Number(fill.sz)));
   const holds = input.closedTrades.flatMap((trade) => trade.openedAt === null ? [] : [Math.max(0, trade.closedAt - trade.openedAt)]);
   const averageHoldMs = holds.length ? average(holds) : null;
   const medianHoldMs = median(holds);
@@ -67,7 +68,7 @@ export function copyabilityScore(input: {
   const tradesPerDay = fills.length / observedDays;
   const maxDrawdown = maximumDrawdown(input.accountValue);
   const grossPnl = fills.reduce((sum, fill) => sum + Number(fill.closedPnl || 0), 0);
-  const fees = fills.reduce((sum, fill) => sum + Number(fill.fee || 0), 0);
+  const fees = fills.reduce((sum, fill) => sum + feeInUsd(fill), 0);
   const closedNotional = fills.filter((fill) => Number(fill.closedPnl || 0) !== 0)
     .reduce((sum, fill) => sum + Math.abs(Number(fill.px) * Number(fill.sz)), 0);
   const feeBps = closedNotional ? clamp(Math.abs(fees) / closedNotional * 10_000, 0, 100) : 2.5;
@@ -82,7 +83,8 @@ export function copyabilityScore(input: {
     const measured = measuredRows.length >= 3;
     const slippage = measured ? Math.max(0, average(measuredRows)) : estimatedSlippageBps * Math.sqrt(delay);
     const costBps = slippage + feeBps;
-    const netPnl = grossPnl + fees - closedNotional * costBps / 10_000;
+    // Trader PnL and follower estimates each charge their own fees once.
+    const netPnl = grossPnl - closedNotional * costBps / 10_000;
     const retained = grossPnl > 0 ? netPnl / grossPnl * 100 : 0;
     return { delay, netPnl, retained, costBps, measured };
   });
@@ -92,9 +94,10 @@ export function copyabilityScore(input: {
   const liquidityScore = averageLiquidityShare === null ? 45 : clamp(100 - Math.log10(1 + averageLiquidityShare * 100) * 45);
   const frequencyScore = clamp(110 - Math.log10(1 + tradesPerDay) * 42);
   const drawdownScore = maxDrawdown === null ? 45 : clamp(100 - maxDrawdown * 1.7);
-  const delayedScore = clamp(delayResults.find((result) => result.delay === 10)?.retained ?? 0);
+  const retained = delayResults.find((result) => result.delay === 10)?.retained ?? 0;
+  const delayedScore = Number.isFinite(retained) ? clamp(retained) : 0;
   let score = Math.round(holdScore * .25 + liquidityScore * .2 + drawdownScore * .2 + delayedScore * .15 + makerScore * .1 + frequencyScore * .1);
-  if (grossPnl <= 0 || input.closedTrades.length < 3) score = Math.min(score, 44);
+  if (!Number.isFinite(fees) || grossPnl <= 0 || input.closedTrades.length < 3) score = Math.min(score, 44);
   const confidence = input.closedTrades.length >= 30 && observedDays >= 30 && tagged.length >= 30 ? "high"
     : input.closedTrades.length >= 10 && observedDays >= 7 ? "medium" : "low";
   const verdict: CopyVerdict = score >= 70 && confidence !== "low" ? "copyable" : score >= 45 ? "observe" : "avoid";

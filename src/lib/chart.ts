@@ -1,10 +1,11 @@
-import { netClosedPnl, type Fill } from "./stats.ts";
+import { isClosingFill, netClosedPnl, type Fill } from "./stats.ts";
+import { fillTransition } from "./position-reducer.ts";
 
 export type ChartPoint = [number, number];
 
 export function realizedSeries(fills: Fill[], start: number, end: number): ChartPoint[] {
   const closed = fills
-    .filter((fill) => fill.time >= start && fill.time <= end && Number(fill.closedPnl) !== 0)
+    .filter((fill) => fill.time >= start && fill.time <= end && Number.isFinite(netClosedPnl(fill)) && netClosedPnl(fill) !== 0)
     .sort((a, b) => a.time - b.time);
   let cumulative = 0;
   return [[start, 0], ...closed.map((fill) => [fill.time, cumulative += netClosedPnl(fill)] as ChartPoint), [end, cumulative]];
@@ -12,11 +13,11 @@ export function realizedSeries(fills: Fill[], start: number, end: number): Chart
 
 export function eventSummary(fills: Fill[], start: number, end: number) {
   const events = fills.filter((fill) => fill.time >= start && fill.time <= end);
-  const closed = events.filter((fill) => Number(fill.closedPnl) !== 0);
+  const closed = events.filter(isClosingFill);
   return {
     total: events.length,
-    opens: events.filter((fill) => fill.dir.startsWith("Open")).length,
-    closes: events.filter((fill) => fill.dir.startsWith("Close")).length,
+    opens: events.filter((fill) => { const action = fillTransition(fill)?.action; return action ? ["OPEN", "FLIP"].includes(action) : /^open\b/i.test(fill.dir); }).length,
+    closes: events.filter((fill) => { const action = fillTransition(fill)?.action; return action ? ["CLOSE", "FLIP"].includes(action) : /^close\b/i.test(fill.dir); }).length,
     wins: closed.filter((fill) => netClosedPnl(fill) > 0).length,
     losses: closed.filter((fill) => netClosedPnl(fill) < 0).length,
   };

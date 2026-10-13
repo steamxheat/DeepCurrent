@@ -1,4 +1,5 @@
 import type { Fill } from "./stats.ts";
+import { netClosedPnl } from "./stats.ts";
 
 export const screeningWindowDays = 60 as const;
 export const screeningWindowMs = screeningWindowDays * 24 * 60 * 60 * 1_000;
@@ -36,7 +37,7 @@ export function screenWallet(address: string, fills: Fill[], historyComplete: bo
     if (Number(fill.closedPnl) === 0 && !/(close|reduce|>)/i.test(fill.dir)) continue;
     const usableHash = fill.hash && !/^0x0+$/.test(fill.hash);
     const key = usableHash ? `${fill.coin}:${fill.hash}` : `${fill.coin}:${fill.side}:${Math.floor(fill.time / 1_000)}`;
-    outcomes.set(key, (outcomes.get(key) ?? 0) + Number(fill.closedPnl || 0) + Number(fill.fee || 0));
+    outcomes.set(key, (outcomes.get(key) ?? 0) + netClosedPnl(fill));
   }
   const trades = [...outcomes.values()];
   const wins = trades.filter((netPnl) => netPnl > 0).length;
@@ -44,7 +45,7 @@ export function screenWallet(address: string, fills: Fill[], historyComplete: bo
   const netPnl = trades.reduce((sum, value) => sum + value, 0);
   const volume = recent.reduce((sum, fill) => sum + Math.abs(Number(fill.px) * Number(fill.sz)), 0);
   const lastActive = recent.reduce((latest, fill) => Math.max(latest, fill.time), 0);
-  const reason = !historyComplete ? "history_limit" : !lastActive ? "inactive" : trades.length < minimumScreeningTrades ? "too_few_trades" : winRate < 60 ? "win_rate" : "qualified";
+  const reason = !historyComplete ? "history_limit" : !Number.isFinite(netPnl) ? "unknown_fee_currency" : !lastActive ? "inactive" : trades.length < minimumScreeningTrades ? "too_few_trades" : winRate < 60 ? "win_rate" : "qualified";
   const score = Math.round((winRate + (winRate >= 80 && winRate <= 90 ? 10 : 0) + Math.log10(trades.length + 1) * 8 + Math.log10(Math.max(1, netPnl)) * 3) * 10) / 10;
   return {
     address: address.toLowerCase(), platform: "hyperliquid", windowDays: screeningWindowDays, trades: trades.length, wins, winRate,

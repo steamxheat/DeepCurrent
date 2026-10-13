@@ -57,6 +57,7 @@ export type UserPreferences = {
   showExactTrades: boolean;
   signalThreshold: number;
   confluenceMinutes: number;
+  confluenceMinWallets: number; confluenceMinQuality: number; confluenceMinCopyability: number; confluenceOnlyOpen: boolean;
   hiddenMarkets: string[];
 };
 
@@ -73,6 +74,7 @@ export const defaultUserPreferences: UserPreferences = {
   riskFreeOnly: false, activityCoin: "all", activityAction: "all", activityFavoritesOnly: false,
   activityMinNotional: 0, activitySort: "newest", activityLimit: 50, showMarketTrades: true,
   showExactTrades: true, signalThreshold: 10_000, confluenceMinutes: 30, hiddenMarkets: [],
+  confluenceMinWallets: 2, confluenceMinQuality: 0, confluenceMinCopyability: 0, confluenceOnlyOpen: false,
 };
 
 const options = <T extends string | number>(value: unknown, allowed: readonly T[], fallback: T) => allowed.includes(value as T) ? value as T : fallback;
@@ -112,12 +114,14 @@ export function normalizeUserPreferences(value: unknown): UserPreferences {
     namedOnly: flag(source.namedOnly, defaults.namedOnly), favoritesOnly: flag(source.favoritesOnly, defaults.favoritesOnly),
     riskFreeOnly: flag(source.riskFreeOnly, defaults.riskFreeOnly),
     activityCoin: typeof source.activityCoin === "string" && source.activityCoin.length <= 30 ? source.activityCoin : defaults.activityCoin,
-    activityAction: options(source.activityAction, ["all", "long", "short", "reduced"], defaults.activityAction),
+    activityAction: options(source.activityAction, ["all", "long", "short", "reduced", "OPEN", "ADD", "REDUCE", "CLOSE", "FLIP"], defaults.activityAction),
     activityFavoritesOnly: flag(source.activityFavoritesOnly, defaults.activityFavoritesOnly),
-    activityMinNotional: amount(source.activityMinNotional, defaults.activityMinNotional), activitySort: options(source.activitySort, ["newest", "largest"], defaults.activitySort),
+    activityMinNotional: amount(source.activityMinNotional, defaults.activityMinNotional), activitySort: options(source.activitySort, ["newest", "oldest", "largest", "price", "price-asc"], defaults.activitySort),
     activityLimit: options(source.activityLimit, [25, 50, 100, 250], defaults.activityLimit),
     showMarketTrades: flag(source.showMarketTrades, defaults.showMarketTrades), showExactTrades: flag(source.showExactTrades, defaults.showExactTrades),
-    signalThreshold: amount(source.signalThreshold, defaults.signalThreshold), confluenceMinutes: amount(source.confluenceMinutes, defaults.confluenceMinutes, 1_440),
+    signalThreshold: amount(source.signalThreshold, defaults.signalThreshold), confluenceMinutes: options(source.confluenceMinutes, [1, 5, 15, 30, 60, 120, 240, 1440], defaults.confluenceMinutes),
+    confluenceMinWallets: Math.max(2, Math.floor(amount(source.confluenceMinWallets, 2, 1000))), confluenceMinQuality: amount(source.confluenceMinQuality, 0, 100),
+    confluenceMinCopyability: amount(source.confluenceMinCopyability, 0, 100), confluenceOnlyOpen: flag(source.confluenceOnlyOpen, false),
     hiddenMarkets: Array.isArray(source.hiddenMarkets) ? [...new Set(source.hiddenMarkets.filter((coin): coin is string => typeof coin === "string" && coin.length <= 30).map((coin) => coin.toUpperCase()))].slice(0, 100) : [...defaults.hiddenMarkets],
   };
 }

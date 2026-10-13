@@ -1,6 +1,4 @@
-import { mkdirSync } from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { getDatabase } from "./database.ts";
 import { defaultNotificationSettings, normalizeNotificationSettings, type NotificationSettings } from "./notifications.ts";
 import { defaultUserPreferences, normalizeUserPreferences, type UserPreferences } from "./user-preferences.ts";
 
@@ -13,20 +11,23 @@ export type NotificationProfile = {
 
 export type NotificationSubscriber = {
   userId: string;
-  chatId: string;
+  chatId: string | null;
   settings: NotificationSettings;
 };
+
+export type InboxNotification = { id: number; title: string; body: string; url: string; createdAt: number; readAt: number | null };
+export type StoredPushSubscription = { endpoint: string; p256dh: string; auth: string };
 
 export type StoredPosition = { wallet: string; coin: string; size: number; openedAt: number | null; updatedAt: number };
 type UserRow = { chat_id: string | null; settings: string | null; preferences: string | null };
 type FavoriteRow = { address: string };
 type WalletRow = { address: string };
-type SubscriberRow = { user_id: string; chat_id: string; settings: string | null };
+type SubscriberRow = { user_id: string; chat_id: string | null; settings: string | null };
 type PositionRow = { wallet: string; coin: string; size: number; opened_at: number | null; updated_at: number };
+type InboxRow = { id: number; title: string; body: string; url: string; created_at: number; read_at: number | null };
+type PushRow = { endpoint: string; p256dh: string; auth: string };
 
-const databasePath = process.env.DEEPCURRENT_DB_PATH || path.join(process.cwd(), ".data", "deep-current.sqlite");
-mkdirSync(path.dirname(databasePath), { recursive: true });
-const db = new DatabaseSync(databasePath);
+const db = getDatabase();
 db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA busy_timeout = 5000;
@@ -57,6 +58,27 @@ db.exec(`
     occurred_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS processed_fills_time ON processed_fills(occurred_at);
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    endpoint TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS push_subscriptions_user ON push_subscriptions(user_id);
+  CREATE TABLE IF NOT EXISTS notification_inbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    event_key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    url TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    read_at INTEGER,
+    UNIQUE(user_id, event_key)
+  );
+  CREATE INDEX IF NOT EXISTS notification_inbox_user_time ON notification_inbox(user_id, created_at DESC);
 `);
 if (!(db.prepare("PRAGMA table_info(notification_users)").all() as Array<{ name: string }>).some((column) => column.name === "preferences")) {
   db.exec("ALTER TABLE notification_users ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}'");
@@ -117,8 +139,54 @@ export function getWatchedWallets() {
 
 export function getSubscribersForWallet(wallet: string): NotificationSubscriber[] {
   return (db.prepare(`SELECT u.user_id, u.chat_id, u.settings FROM notification_users u JOIN favorite_wallets f ON f.user_id = u.user_id
-    WHERE f.address = ? AND u.chat_id IS NOT NULL`).all(wallet.toLowerCase()) as SubscriberRow[])
+    WHERE f.address = ?`).all(wallet.toLowerCase()) as SubscriberRow[])
     .map((row) => ({ userId: row.user_id, chatId: row.chat_id, settings: readSettings(row.settings) }));
+}
+
+export function savePushSubscription(userId: string, subscription: StoredPushSubscription) {
+  ensureUser(userId);
+  const now = Date.now();
+  db.prepare(`INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth, updated_at = excluded.updated_at`)
+    .run(subscription.endpoint, userId, subscription.p256dh, subscription.auth, now, now);
+}
+
+export function removePushSubscription(userId: string, endpoint: string) {
+  db.prepare("DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?").run(userId, endpoint);
+}
+
+export function removePushSubscriptionByEndpoint(endpoint: string) {
+  db.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?").run(endpoint);
+}
+
+export function pushSubscriptionsForUser(userId: string) {
+  return db.prepare("SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?").all(userId) as PushRow[];
+}
+
+export function hasPushSubscription(userId: string) {
+  return Boolean(db.prepare("SELECT 1 FROM push_subscriptions WHERE user_id = ? LIMIT 1").get(userId));
+}
+
+export function recordInboxNotification(userId: string, eventKey: string, title: string, body: string, url: string, createdAt = Date.now()) {
+  ensureUser(userId);
+  db.prepare("INSERT OR IGNORE INTO notification_inbox (user_id, event_key, title, body, url, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+    .run(userId, eventKey, title.slice(0, 160), body.slice(0, 500), url.slice(0, 500), createdAt);
+}
+
+export function recentInboxNotifications(userId: string, limit = 50): InboxNotification[] {
+  ensureUser(userId);
+  const rows = db.prepare("SELECT id, title, body, url, created_at, read_at FROM notification_inbox WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+    .all(userId, Math.min(100, Math.max(1, limit))) as InboxRow[];
+  return rows.map((row) => ({ id: row.id, title: row.title, body: row.body, url: row.url, createdAt: row.created_at, readAt: row.read_at }));
+}
+
+export function markInboxRead(userId: string, id?: number) {
+  if (id) db.prepare("UPDATE notification_inbox SET read_at = COALESCE(read_at, ?) WHERE user_id = ? AND id = ?").run(Date.now(), userId, id);
+  else db.prepare("UPDATE notification_inbox SET read_at = COALESCE(read_at, ?) WHERE user_id = ?").run(Date.now(), userId);
+}
+
+export function clearInbox(userId: string) {
+  db.prepare("DELETE FROM notification_inbox WHERE user_id = ?").run(userId);
 }
 
 export function getStoredPositions(wallet: string) {

@@ -32,3 +32,9 @@ test("maximum drawdown ignores unavailable zero-value portfolio points", () => {
   assert.equal(maximumDrawdown([[0, 0], [1, 100], [2, 80]]), 20);
   assert.equal(maximumDrawdown([[0, 0], [1, 0]]), null);
 });
+
+test("spot token fees do not contaminate perpetual copyability with NaN", () => {
+  const result = copyabilityScore({ fills: [fill(1), fill(2, { coin: "HYPE/USDC", feeToken: "HYPE" })], closedTrades: [trade(0, 1)], accountValue: [] });
+  assert.equal(Number.isFinite(result.score), true); assert.equal(result.fillCount, 1);
+  assert.equal(result.delayResults.every((row) => Number.isFinite(row.netPnl)), true);
+});

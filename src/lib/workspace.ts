@@ -1,4 +1,5 @@
 import type { PulseFill, WalletRow } from "./hyperliquid";
+import { activityKind } from "./live.ts";
 
 export type WalletSort = "rank" | "accountValue" | "dayPnl" | "monthPnl" | "monthRoi" | "dayVolume";
 export type WalletFilters = {
@@ -15,11 +16,11 @@ export type WalletFilters = {
 export type ActivityFilters = {
   query: string;
   coin: string;
-  action: "all" | "long" | "short" | "reduced";
+  action: "all" | "long" | "short" | "reduced" | "OPEN" | "ADD" | "REDUCE" | "CLOSE" | "FLIP";
   source: "all" | "exact" | "market";
   favoritesOnly: boolean;
   minNotional: number;
-  sort: "newest" | "largest";
+  sort: "newest" | "oldest" | "largest" | "price" | "price-asc";
 };
 
 export const defaultWalletFilters: WalletFilters = { query: "", performance: "all", minAccount: 0, minMonthPnl: 0, minRoi: 0, minVolume: 0, namedOnly: false, favoritesOnly: false, riskFreeOnly: false };
@@ -75,18 +76,19 @@ export function walletInsights(wallets: WalletRow[]) {
 export function filterActivity(fills: PulseFill[], filters: ActivityFilters, favorites: Set<string>) {
   const query = filters.query.trim().toLowerCase();
   return fills.filter((fill) => {
-    const direction = fill.dir.toLowerCase();
+    const activity = activityKind(fill);
     const notional = Number(fill.px) * Number(fill.sz);
     if (query && !`${fill.coin} ${fill.walletName} ${fill.wallet}`.toLowerCase().includes(query)) return false;
     if (filters.coin !== "all" && fill.coin !== filters.coin) return false;
-    if (filters.action === "long" && !/long|buy/.test(direction)) return false;
-    if (filters.action === "short" && !/short|sell/.test(direction)) return false;
-    if (filters.action === "reduced" && !/close|reduce/.test(direction)) return false;
+    if (filters.action === "long" && activity.direction !== "LONG") return false;
+    if (filters.action === "short" && activity.direction !== "SHORT") return false;
+    if (filters.action === "reduced" && !["REDUCE", "CLOSE"].includes(activity.label)) return false;
+    if (/^[A-Z]+$/.test(filters.action) && filters.action !== activity.label) return false;
     if (filters.source === "exact" && fill.source === "market") return false;
     if (filters.source === "market" && fill.source !== "market") return false;
     if (filters.favoritesOnly && !favorites.has(fill.wallet)) return false;
     return notional >= filters.minNotional;
-  }).sort((a, b) => filters.sort === "largest" ? Number(b.px) * Number(b.sz) - Number(a.px) * Number(a.sz) : b.time - a.time);
+  }).sort((a, b) => filters.sort === "largest" ? Number(b.px) * Number(b.sz) - Number(a.px) * Number(a.sz) : filters.sort === "oldest" ? a.time - b.time : filters.sort === "price" ? Number(b.px) - Number(a.px) : filters.sort === "price-asc" ? Number(a.px) - Number(b.px) : b.time - a.time);
 }
 
 const csvCell = (value: unknown) => `"${String(value).replaceAll('"', '""')}"`;

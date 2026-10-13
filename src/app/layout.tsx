@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import { IntroAnimation } from "./intro-animation";
@@ -17,7 +17,13 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Deep Current — whale intelligence",
   description: "Публичная аналитика сделок и позиций кошельков Hyperliquid.",
+  manifest: "/manifest.webmanifest",
+  applicationName: "Deep Current",
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Deep Current" },
+  icons: { icon: "/dc-pulse-mark.png", apple: "/dc-pulse-mark.png" },
 };
+
+export const viewport: Viewport = { themeColor: "#000000", colorScheme: "dark", viewportFit: "cover" };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
