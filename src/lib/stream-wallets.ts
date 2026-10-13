@@ -1,3 +1,9 @@
+export function missingUserSubscriptions(wallets: Iterable<string>, acknowledged: Set<string>) {
+  return [...wallets].flatMap((user) => ["userFills", "allDexsClearinghouseState", "userFundings"].map((type) => ({
+    type, user, ...(type === "userFills" ? { aggregateByTime: false } : {}),
+  }))).filter((subscription) => !acknowledged.has(JSON.stringify(subscription)));
+}
+
 export function selectStreamWallets(input: { active: string[]; favorites: string[]; ranked: string[];
   subscribedAt: Map<string, number>; lastTrade: Map<string, number>; now: number }) {
   const byActivity = (a: string, b: string) => (input.lastTrade.get(b) ?? 0) - (input.lastTrade.get(a) ?? 0);

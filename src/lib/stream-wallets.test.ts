@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { selectStreamWallets } from "./stream-wallets.ts";
+import { missingUserSubscriptions, selectStreamWallets } from "./stream-wallets.ts";
+
+test("rejected user subscriptions retry without replacing acknowledged streams or exceeding selected wallets", () => {
+  const users = new Set(["a", "b"]); const ack = new Set<string>();
+  const initial = missingUserSubscriptions(users, ack); assert.equal(initial.length, 6);
+  const accepted = initial.filter((row) => row.user === "a");
+  accepted.forEach((row) => ack.add(JSON.stringify(row)));
+  const retry = missingUserSubscriptions(users, ack);
+  assert.equal(retry.length, 3); assert.ok(retry.every((row) => row.user === "b"));
+  assert.deepEqual(missingUserSubscriptions(users, ack), retry);
+  retry.forEach((row) => ack.add(JSON.stringify(row)));
+  assert.deepEqual(missingUserSubscriptions(users, ack), []);
+  assert.deepEqual(missingUserSubscriptions([], ack), []);
+  ack.clear(); assert.deepEqual(missingUserSubscriptions(users, ack), initial);
+});
 
 test("viewers and favorites displace lower priority streams; recent activity fills the remaining slots", () => {
   const ranked = Array.from({ length: 20 }, (_, index) => `wallet${index}`);

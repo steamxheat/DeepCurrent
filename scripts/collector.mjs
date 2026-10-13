@@ -19,7 +19,7 @@ import { transaction } from "../src/lib/database.ts";
 import { createSocketBudget } from "../src/lib/socket-budget.ts";
 import { snapshotRefreshScopes, streamScopeSnapshots } from "../src/lib/wallet-snapshot.ts";
 import { createConfirmationQueue } from "../src/lib/confirmation-queue.ts";
-import { selectStreamWallets } from "../src/lib/stream-wallets.ts";
+import { missingUserSubscriptions, selectStreamWallets } from "../src/lib/stream-wallets.ts";
 import { createCollectorHealth, diagnosticError } from "../src/lib/collector-health.ts";
 
 const journal = getFillJournal(); const owner = randomUUID();
@@ -145,8 +145,9 @@ function selectUsers() {
   for (const wallet of selected) if (!subscribedUsers.has(wallet)) {
     subscribedUsers.add(wallet); subscribedAt.set(wallet, Date.now());
     if (!journal.getCoverage(wallet)) recoverQueue.add(wallet);
-    for (const type of ["userFills", "allDexsClearinghouseState", "userFundings"]) subscribe({ type, user: wallet, ...(type === "userFills" ? { aggregateByTime: false } : {}) });
   }
+  // A rejected subscription is not an acknowledgement; retry on the bounded 10-second selection tick.
+  for (const subscription of missingUserSubscriptions(subscribedUsers, ack)) subscribe(subscription);
 }
 function ingestBatch(rows) {
   for (let start = 0; start < rows.length; start += 500) {
