@@ -9,9 +9,10 @@ import { coinFlowChange } from "./coin-intelligence";
 import { fetchWithRetry } from "./fetch-retry";
 import {
   coinJournal, copySamplesForWallet, latestCoinSnapshots, recordCompletedTrades, recordFundingEvents, recordOrderEvents,
-  recordPositionSnapshots, recordWalletEvent, walletCompletedTrades, walletFunding, walletJournal, walletOrders, walletScreenings,
+  recordPositionSnapshots, recordWalletEvent, walletCompletedTrades, walletFunding, walletJournal, walletOrders,
   type FundingEvent, type JournalEvent, type OrderEvent,
 } from "./event-store";
+import { availableWalletScreenings } from "./wallet-registry";
 
 const INFO_URL = "https://api.hyperliquid.xyz/info";
 const LEADERBOARD_URL = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard";
@@ -152,7 +153,7 @@ async function getLeaderboard(limit: number) {
       score: walletQuality({ accountValue: Number(row.accountValue), monthPnl: month.pnl, monthVolume: month.vlm, weekPnl: week.pnl, monthRoi: month.roi, dayPnl: day.pnl }),
     };
   });
-  const verified = walletScreenings(true, 5_000); const verifiedByAddress = new Map(verified.map((row) => [row.address, row]));
+  const verified = availableWalletScreenings(); const verifiedByAddress = new Map(verified.map((row) => [row.address, row]));
   const candidateByAddress = new Map(candidates.map((row) => [row.address.toLowerCase(), row]));
   const selected = verified.flatMap((screening) => {
     const row = candidateByAddress.get(screening.address); return row && hasPositiveMonthPnl(row.monthPnl) ? [{ ...row, score: row.score ?? screening.score }] : [];

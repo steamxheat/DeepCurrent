@@ -21,6 +21,14 @@ export type WalletScreening = {
   screenedAt: number;
 };
 
+export function mergeWalletScreenings(bundled: WalletScreening[], current: WalletScreening[], now = Date.now()) {
+  const rows = new Map(bundled.map((row) => [row.address, row]));
+  for (const row of current) rows.set(row.address, row);
+  return [...rows.values()]
+    .filter((row) => row.qualifies && row.historyComplete && row.trades >= minimumScreeningTrades && row.winRate >= 60 && row.lastActive >= now - screeningWindowMs)
+    .sort((left, right) => right.score - left.score || right.netPnl - left.netPnl);
+}
+
 export function screenWallet(address: string, fills: Fill[], historyComplete: boolean, now = Date.now()): WalletScreening {
   const recent = fills.filter((fill) => fill.time >= now - screeningWindowMs && fill.time <= now);
   const outcomes = new Map<string, number>();

@@ -11,6 +11,7 @@
     "test": "node --experimental-strip-types --test src/lib/*.test.ts",
     "check:live": "node scripts/check-live.mjs",
     "discover:wallets": "node --experimental-strip-types scripts/discover-wallets.mjs",
+    "export:wallets": "node --experimental-strip-types scripts/export-wallet-registry.mjs",
     "bot": "node --experimental-strip-types scripts/bot.mjs",
     "collector": "node --experimental-strip-types scripts/bot.mjs"
   },

@@ -5,7 +5,7 @@ import {
 import { classifyPositionChange, shouldNotify } from "../src/lib/notifications.ts";
 import { recordCopySample, recordFundingEvents, recordOrderEvents, recordPositionSnapshots, recordWalletEvent } from "../src/lib/event-store.ts";
 import { fetchWithRetry } from "../src/lib/fetch-retry.ts";
-import { walletScreenings } from "../src/lib/event-store.ts";
+import { availableWalletScreenings } from "../src/lib/wallet-registry.ts";
 import { hasPositiveMonthPnl } from "../src/lib/wallet-quality.ts";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -63,7 +63,7 @@ async function leaderboard() {
   const response = await fetch("https://stats-data.hyperliquid.xyz/Mainnet/leaderboard");
   if (!response.ok) throw new Error(`Leaderboard: ${response.status}`);
   const payload = await response.json();
-  const verified = walletScreenings(true, 5_000); const byAddress = new Map(payload.leaderboardRows.map((row) => [row.ethAddress.toLowerCase(), row]));
+  const verified = availableWalletScreenings(); const byAddress = new Map(payload.leaderboardRows.map((row) => [row.ethAddress.toLowerCase(), row]));
   const ordered = verified.flatMap((entry) => {
     const row = byAddress.get(entry.address); const monthPnl = Number(row?.windowPerformances.find(([name]) => name === "month")?.[1]?.pnl ?? 0);
     return row && hasPositiveMonthPnl(monthPnl) ? [row] : [];
