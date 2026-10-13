@@ -29,6 +29,7 @@ const mode = process.env.DC_JOURNAL_MODE === "live" ? "live" : "shadow";
 const token = process.env.TELEGRAM_BOT_TOKEN; const appUrl = process.env.APP_URL;
 let running = true; let socket; let offset = 0; let lastReceive = 0; let diskCheckedAt = 0; let freeBytes = 0; let disconnectedAt = 0;
 let subscriptionLimited = false;
+let userFillsOnly = false;
 let dexNames = [""]; let markets = []; let excludedMarkets = []; let coinNames = {}; let mids = {}; let midsAt = 0;
 const targets = new Map(); const subscribedUsers = new Set(); const ack = new Set(); const recoverQueue = new Set();
 const subscribedAt = new Map(); const lastTrade = new Map();
@@ -126,7 +127,7 @@ function subscribe(subscription, method = "subscribe") {
 function flushSubscriptions() {
   if (socket?.readyState !== WebSocket.OPEN) return;
   let sent = 0;
-  const priority = (message) => message.method === "unsubscribe" ? 0 : message.subscription.user ? 1 : message.subscription.type === "allMids" ? 2 : 3;
+  const priority = (message) => message.method === "unsubscribe" ? 0 : message.subscription.type === "userFills" ? 1 : message.subscription.user ? 2 : message.subscription.type === "allMids" ? 3 : 4;
   for (const [key, message] of [...pendingSubscriptions].sort((a, b) => priority(a[1]) - priority(b[1]))) {
     if (subscriptionLimited && message.method === "subscribe" && message.subscription.type === "trades") continue;
     if (sent >= 50 || !takeSocketMessage()) break;
@@ -147,7 +148,7 @@ function selectUsers() {
     if (!journal.getCoverage(wallet)) recoverQueue.add(wallet);
   }
   // A rejected subscription is not an acknowledgement; retry on the bounded 10-second selection tick.
-  for (const subscription of missingUserSubscriptions(subscribedUsers, ack)) subscribe(subscription);
+  for (const subscription of missingUserSubscriptions(subscribedUsers, ack, userFillsOnly)) subscribe(subscription);
 }
 function ingestBatch(rows) {
   for (let start = 0; start < rows.length; start += 500) {
@@ -178,6 +179,11 @@ function handle(message) {
     if (/more than 1000 channels/i.test(String(message.data))) {
       if (!subscriptionLimited) console.error("Subscription capacity reached; public market coverage is incomplete. Check other consumers on this IP.");
       subscriptionLimited = true;
+    } else if (/more than \d+ (?:total |unique )?users/i.test(String(message.data)) && !userFillsOnly) {
+      // Keep exact executions first; scoped state and funding still have REST recovery paths.
+      userFillsOnly = true;
+      for (const subscription of subscriptions.values()) if (subscription.user && subscription.type !== "userFills") subscribe(subscription, "unsubscribe");
+      console.error("User subscription capacity reached; retaining fills only, state/funding use REST.");
     } else console.error("Subscription error:", message.data);
     return;
   }
@@ -367,7 +373,7 @@ function heartbeat() {
   journal.status("collector", { mode, connected: socket?.readyState === WebSocket.OPEN, acknowledgedMarkets: markets.filter((coin) => ack.has(JSON.stringify({ type: "trades", coin }))).length,
     exactUsers: [...subscribedUsers].filter((user) => ack.has(JSON.stringify({ type: "userFills", user, aggregateByTime: false }))).length,
     exactWallets: [...subscribedUsers].filter((user) => ack.has(JSON.stringify({ type: "userFills", user, aggregateByTime: false }))),
-    marketCount: markets.length, excludedMarkets, subscriptionLimited, pendingSubscriptions: pendingSubscriptions.size, indexedWallets: targets.size, lastReceive, pendingRequests: client.pending(), activeRequests: client.active(),
+    marketCount: markets.length, excludedMarkets, subscriptionLimited, userFillsOnly, pendingSubscriptions: pendingSubscriptions.size, indexedWallets: targets.size, lastReceive, pendingRequests: client.pending(), activeRequests: client.active(),
     recoveryBacklog: recoverQueue.size, freeBytes, revision: journal.revision() });
   journal.status("confirmations", { ...confirmations.stats(), requests: confirmationRequests, failures: confirmationFailures, budget: client.budget() });
   const stats = confirmations.stats(); const memory = process.memoryUsage();

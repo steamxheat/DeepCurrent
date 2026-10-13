@@ -1,5 +1,5 @@
-export function missingUserSubscriptions(wallets: Iterable<string>, acknowledged: Set<string>) {
-  return [...wallets].flatMap((user) => ["userFills", "allDexsClearinghouseState", "userFundings"].map((type) => ({
+export function missingUserSubscriptions(wallets: Iterable<string>, acknowledged: Set<string>, fillsOnly = false) {
+  return [...wallets].flatMap((user) => (fillsOnly ? ["userFills"] : ["userFills", "allDexsClearinghouseState", "userFundings"]).map((type) => ({
     type, user, ...(type === "userFills" ? { aggregateByTime: false } : {}),
   }))).filter((subscription) => !acknowledged.has(JSON.stringify(subscription)));
 }

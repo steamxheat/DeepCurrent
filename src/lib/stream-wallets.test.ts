@@ -14,6 +14,10 @@ test("rejected user subscriptions retry without replacing acknowledged streams o
   assert.deepEqual(missingUserSubscriptions(users, ack), []);
   assert.deepEqual(missingUserSubscriptions([], ack), []);
   ack.clear(); assert.deepEqual(missingUserSubscriptions(users, ack), initial);
+  const fallback = missingUserSubscriptions(users, ack, true);
+  assert.equal(fallback.length, 2); assert.ok(fallback.every((row) => row.type === "userFills"));
+  fallback.forEach((row) => ack.add(JSON.stringify(row)));
+  assert.deepEqual(missingUserSubscriptions(users, ack, true), []);
 });
 
 test("viewers and favorites displace lower priority streams; recent activity fills the remaining slots", () => {
