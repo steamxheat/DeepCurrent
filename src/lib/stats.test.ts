@@ -25,6 +25,42 @@ test("confluence requires two unique wallets in the same market and direction", 
   assert.deepEqual(result[0].wallets.sort(), ["0x1", "0x2"]);
 });
 
+test("confluence ignores public fills, stale entries, and wallets that already closed", () => {
+  const result = findConfluences([
+    fill({ wallet: "0x1", time: 900, startPosition: "0" }),
+    fill({ wallet: "0x1", time: 950, side: "A", startPosition: "1", dir: "Close Long" }),
+    fill({ wallet: "0x2", time: 900, startPosition: "0" }),
+    fill({ wallet: "0x3", time: 900, source: "market" }),
+    fill({ wallet: "0x4", time: 100 }),
+  ], 1_000, 500);
+  assert.deepEqual(result, []);
+});
+
+test("confluence exposes the distinct entries and their actual time span", () => {
+  const [result] = findConfluences([
+    fill({ wallet: "0x1", walletName: "Alpha", time: 900, startPosition: "0", px: "100", sz: "2" }),
+    fill({ wallet: "0x2", walletName: "Beta", time: 980, startPosition: "0", px: "100", sz: "3" }),
+  ], 1_000, 500);
+  assert.equal(result.spanMs, 80);
+  assert.equal(result.totalNotional, 500);
+  assert.deepEqual(result.entries.map((entry) => entry.walletName), ["Beta", "Alpha"]);
+});
+
+test("confluence 2.0 collapses strongly correlated addresses and scores independent traders", () => {
+  const linked = ["BTC", "ETH", "SOL"].flatMap((coin, index) => [
+    fill({ coin, wallet: "0xa", time: 700 + index * 30_000, startPosition: "0" }),
+    fill({ coin, wallet: "0xb", time: 705 + index * 30_000, startPosition: "0" }),
+  ]);
+  const collapsed = findConfluences(linked, 70_800, 90_000);
+  assert.equal(collapsed.length, 0);
+  const [independent] = findConfluences([
+    fill({ wallet: "0xa", time: 900, startPosition: "0" }),
+    fill({ wallet: "0xc", time: 980, startPosition: "0", sz: "20" }),
+  ], 1_000, 500, { "0xa": { quality: 90 }, "0xc": { quality: 80 } });
+  assert.equal(independent.independentWallets, 2);
+  assert.ok(independent.score >= 60);
+});
+
 test("position opening time survives later additions and reductions", () => {
   const fills = [
     fill({ time: 100, sz: "4", side: "B" }),

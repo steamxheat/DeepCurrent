@@ -3,6 +3,10 @@ import {
   getStoredPositions, linkTelegramChat, markFillProcessed, replaceStoredPositions, setNotificationsEnabled, setStoredPosition,
 } from "../src/lib/notification-store.ts";
 import { classifyPositionChange, shouldNotify } from "../src/lib/notifications.ts";
+import { recordCopySample, recordFundingEvents, recordOrderEvents, recordPositionSnapshots, recordWalletEvent } from "../src/lib/event-store.ts";
+import { fetchWithRetry } from "../src/lib/fetch-retry.ts";
+import { walletScreenings } from "../src/lib/event-store.ts";
+import { hasPositiveMonthPnl } from "../src/lib/wallet-quality.ts";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const appUrl = process.env.APP_URL;
@@ -11,11 +15,15 @@ if (!token) throw new Error("Set TELEGRAM_BOT_TOKEN in the collector process env
 const api = `https://api.telegram.org/bot${token}`;
 const aggregateDelay = 1_500;
 const confluenceWindow = Math.max(60_000, Number(process.env.CONFLUENCE_WINDOW_MS) || 15 * 60_000);
+const indexedWalletLimit = Math.min(1_000, Math.max(10, Number(process.env.TRACKED_WALLETS) || 1_000));
 const positions = new Map();
 const readyWallets = new Set();
 const targetWallets = new Set();
+const exactWallets = new Set();
+const walletNames = new Map();
 const pending = new Map();
 const recentSignals = new Map();
+const latestPrices = new Map();
 let coinNames = {};
 let marketSubscriptions = [];
 let perpDexNames = [""];
@@ -33,7 +41,7 @@ const displayCoin = (coin) => coinNames[coin] ?? coin;
 const positionKey = (wallet, coin) => `${wallet}:${coin}`;
 
 async function post(body) {
-  const response = await fetch("https://api.hyperliquid.xyz/info", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const response = await fetchWithRetry(() => fetch("https://api.hyperliquid.xyz/info", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
   if (!response.ok) throw new Error(`Hyperliquid API: ${response.status}`);
   return response.json();
 }
@@ -55,9 +63,14 @@ async function leaderboard() {
   const response = await fetch("https://stats-data.hyperliquid.xyz/Mainnet/leaderboard");
   if (!response.ok) throw new Error(`Leaderboard: ${response.status}`);
   const payload = await response.json();
-  return payload.leaderboardRows.slice(0, 200).map((row) => {
+  const verified = walletScreenings(true, 5_000); const byAddress = new Map(payload.leaderboardRows.map((row) => [row.ethAddress.toLowerCase(), row]));
+  const ordered = verified.flatMap((entry) => {
+    const row = byAddress.get(entry.address); const monthPnl = Number(row?.windowPerformances.find(([name]) => name === "month")?.[1]?.pnl ?? 0);
+    return row && hasPositiveMonthPnl(monthPnl) ? [row] : [];
+  }).slice(0, indexedWalletLimit);
+  return ordered.map((row) => {
     const day = row.windowPerformances.find(([name]) => name === "day")?.[1] ?? {};
-    return { name: row.displayName || short(row.ethAddress), pnl: Number(day.pnl || 0) };
+    return { address: row.ethAddress.toLowerCase(), name: row.displayName || short(row.ethAddress), pnl: Number(day.pnl || 0) };
   });
 }
 
@@ -103,10 +116,18 @@ async function seedWallet(wallet) {
   try {
     const stored = new Map(getStoredPositions(wallet).map((position) => [position.coin, position]));
     const states = await Promise.allSettled(perpDexNames.map((dex) => post({ type: "clearinghouseState", user: wallet, ...(dex ? { dex } : {}) })));
-    const rows = states.flatMap((result) => result.status === "fulfilled" ? (result.value.assetPositions ?? []).map(({ position }) => {
-      const size = Number(position.szi); const previous = stored.get(position.coin);
+    const capturedAt = Date.now();
+    const snapshots = states.flatMap((result) => result.status === "fulfilled" ? (result.value.assetPositions ?? []).map(({ position }) => ({
+      wallet, coin: position.coin, capturedAt, size: Number(position.szi), entryPx: Number(position.entryPx ?? 0),
+      positionValue: Number(position.positionValue ?? 0), unrealizedPnl: Number(position.unrealizedPnl ?? 0),
+      leverage: Number(position.leverage?.value ?? 1), liquidationPx: position.liquidationPx ? Number(position.liquidationPx) : null,
+      marginUsed: Math.abs(Number(position.positionValue ?? 0)) / Math.max(1, Number(position.leverage?.value ?? 1)), source: "Hyperliquid clearinghouseState",
+    })) : []);
+    recordPositionSnapshots(snapshots);
+    const rows = snapshots.map((position) => {
+      const size = position.size; const previous = stored.get(position.coin);
       return { coin: position.coin, size, openedAt: previous && Math.sign(previous.size) === Math.sign(size) ? previous.openedAt : null };
-    }) : []).filter((row) => row.size);
+    }).filter((row) => row.size);
     replaceStoredPositions(wallet, rows);
     for (const key of [...positions.keys()]) if (key.startsWith(`${wallet}:`)) positions.delete(key);
     for (const row of rows) positions.set(positionKey(wallet, row.coin), { size: row.size, openedAt: row.openedAt });
@@ -117,14 +138,16 @@ async function seedWallet(wallet) {
 async function refreshTargets(reseed = false) {
   if (refreshTask) { await refreshTask; if (!reseed) return; }
   const task = (async () => {
-    const wallets = getWatchedWallets();
-    const next = new Set(wallets);
+    const [favorites, curated] = await Promise.all([Promise.resolve(getWatchedWallets()), leaderboard().catch(() => [])]);
+    const wallets = [...new Set([...favorites, ...curated.map((row) => row.address)])];
+    curated.forEach((row) => walletNames.set(row.address, row.name));
+    const next = new Set(wallets); const exact = new Set([...favorites, ...curated.slice(0, 10).map((row) => row.address)]);
     for (const wallet of targetWallets) if (!next.has(wallet)) {
       readyWallets.delete(wallet);
       for (const key of [...positions.keys()]) if (key.startsWith(`${wallet}:`)) positions.delete(key);
     }
-    targetWallets.clear(); wallets.forEach((wallet) => targetWallets.add(wallet));
-    for (const wallet of wallets) {
+    targetWallets.clear(); wallets.forEach((wallet) => targetWallets.add(wallet)); exactWallets.clear(); exact.forEach((wallet) => exactWallets.add(wallet));
+    for (const wallet of exact) {
       if (!reseed && readyWallets.has(wallet)) continue;
       if (reseed) readyWallets.delete(wallet);
       await seedWallet(wallet); await sleep(perpDexNames.length * 110);
@@ -132,6 +155,30 @@ async function refreshTargets(reseed = false) {
   })();
   refreshTask = task;
   try { await task; } finally { if (refreshTask === task) refreshTask = undefined; }
+}
+
+async function syncExactHistory() {
+  const wallets = [...exactWallets].slice(0, 25);
+  for (const wallet of wallets) {
+    try {
+      const [orders, funding] = await Promise.all([
+        post({ type: "historicalOrders", user: wallet }).catch(() => []),
+        post({ type: "userFunding", user: wallet, startTime: Date.now() - 86_400_000 }).catch(() => []),
+      ]);
+      recordOrderEvents(orders.slice(0, 500).flatMap((row) => row.order?.coin ? [{
+        eventKey: `${wallet}:order:${row.order.oid ?? "unknown"}:${row.status ?? "unknown"}:${row.statusTimestamp ?? row.order.timestamp ?? 0}`, wallet,
+        coin: displayCoin(row.order.coin), side: row.order.side ?? "—", status: row.status ?? "unknown",
+        kind: typeof row.order.orderType === "string" ? row.order.orderType : row.order.reduceOnly ? "reduce-only" : "limit",
+        limitPx: Number(row.order.limitPx ?? 0), size: Number(row.order.origSz ?? row.order.sz ?? 0),
+        time: Number(row.statusTimestamp ?? row.order.timestamp ?? 0), source: "Hyperliquid historicalOrders",
+      }] : []));
+      recordFundingEvents(funding.slice(0, 500).flatMap((row) => row.delta?.coin && row.time ? [{
+        eventKey: `${wallet}:funding:${row.hash ?? `${row.delta.coin}:${row.time}`}`, wallet, coin: displayCoin(row.delta.coin),
+        time: row.time, amount: Number(row.delta.usdc ?? 0), rate: Number(row.delta.fundingRate ?? 0), size: Number(row.delta.szi ?? 0), source: "Hyperliquid userFunding",
+      }] : []));
+    } catch (error) { console.error(`History ${short(wallet)}:`, error.message); }
+    await sleep(120);
+  }
 }
 
 function confluenceCount(event) {
@@ -142,12 +189,26 @@ function confluenceCount(event) {
   return new Set(rows.map((row) => row.wallet)).size;
 }
 
+function sampleCopyability(eventKey, event) {
+  if (!["OPEN", "ADD", "FLIP"].includes(event.action) || !event.price) return;
+  for (const delay of [1, 3, 10, 30]) setTimeout(() => {
+    const price = latestPrices.get(event.rawCoin); if (!price) return;
+    const adverseBps = (event.direction === "LONG" ? price - event.price : event.price - price) / event.price * 10_000;
+    recordCopySample(eventKey, event.wallet, event.coin, delay, adverseBps);
+  }, delay * 1_000);
+}
+
 async function flushGroup(key) {
   const group = pending.get(key); if (!group) return;
   pending.delete(key); clearTimeout(group.timer);
   const change = classifyPositionChange(group.before, group.after);
   if (!change) return;
   const event = { ...group, ...change, coin: displayCoin(group.coin), notional: group.notional };
+  const keyId = `${event.wallet}:${event.hash ?? event.time}:${event.tid ?? `${event.coin}:${event.time}`}:group`;
+  recordWalletEvent({ eventKey: keyId, wallet: event.wallet, walletName: walletNames.get(event.wallet), coin: event.coin,
+    action: event.action, direction: event.direction, time: event.time, price: event.price, size: event.size, notional: event.notional,
+    beforeSize: event.before, afterSize: event.after, source: "Hyperliquid market WebSocket", precision: "exact", hash: event.hash, tid: event.tid });
+  sampleCopyability(keyId, { ...event, rawCoin: group.coin });
   const matches = confluenceCount(event);
   const labels = { OPEN: "ОТКРЫЛ", ADD: "УВЕЛИЧИЛ", REDUCE: "СОКРАТИЛ", CLOSE: "ЗАКРЫЛ", FLIP: "ПЕРЕВЕРНУЛ", BUY: "КУПИЛ", SELL: "ПРОДАЛ" };
   const exactTime = new Intl.DateTimeFormat("ru-RU", { timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3 }).format(event.time);
@@ -160,7 +221,21 @@ async function flushGroup(key) {
 }
 
 function recordTrade(trade, wallet, side) {
-  if (trade.coin.startsWith("@") || trade.time < streamStartedAt - 2_000 || !readyWallets.has(wallet) || !markFillProcessed(wallet, trade.hash ?? "", trade.tid ?? `${trade.coin}:${trade.time}:${side}`, trade.time)) return;
+  if (trade.time < streamStartedAt - 2_000 || !markFillProcessed(wallet, trade.hash ?? "", trade.tid ?? `${trade.coin}:${trade.time}:${side}`, trade.time)) return;
+  if (trade.coin.startsWith("@")) {
+    recordWalletEvent({ eventKey: `${wallet}:${trade.hash ?? trade.time}:${trade.tid ?? `${trade.coin}:${side}`}`, wallet, walletName: walletNames.get(wallet),
+      coin: displayCoin(trade.coin), action: side, direction: side === "BUY" ? "LONG" : "SHORT", time: trade.time,
+      price: Number(trade.px), size: Number(trade.sz), notional: Math.abs(Number(trade.px) * Number(trade.sz)),
+      source: "Hyperliquid market WebSocket", precision: "observed", hash: trade.hash, tid: trade.tid });
+    return;
+  }
+  if (!readyWallets.has(wallet)) {
+    recordWalletEvent({ eventKey: `${wallet}:${trade.hash ?? trade.time}:${trade.tid ?? `${trade.coin}:${side}`}`, wallet, walletName: walletNames.get(wallet),
+      coin: displayCoin(trade.coin), action: side, direction: side === "BUY" ? "LONG" : "SHORT", time: trade.time,
+      price: Number(trade.px), size: Number(trade.sz), notional: Math.abs(Number(trade.px) * Number(trade.sz)),
+      source: "Hyperliquid market WebSocket", precision: "observed", hash: trade.hash, tid: trade.tid });
+    return;
+  }
   const coin = trade.coin; const key = positionKey(wallet, coin); const current = positions.get(key) ?? { size: 0, openedAt: null };
   const delta = Number(trade.sz) * (side === "BUY" ? 1 : -1); const rawSize = current.size + delta; const nextSize = Math.abs(rawSize) < 1e-10 ? 0 : rawSize;
   const openedAt = current.size === 0 || Math.sign(current.size) !== Math.sign(nextSize) ? trade.time : nextSize === 0 ? null : current.openedAt;
@@ -170,15 +245,15 @@ function recordTrade(trade, wallet, side) {
     clearTimeout(existing.timer); existing.after = nextSize; existing.size += Math.abs(delta); existing.notional += Math.abs(delta) * Number(trade.px); existing.price = existing.notional / existing.size; existing.time = Math.max(existing.time, trade.time);
     existing.timer = setTimeout(() => flushGroup(groupKey).catch(console.error), aggregateDelay);
   } else {
-    const group = { wallet, coin, before: current.size, after: nextSize, openedAt: current.openedAt, size: Math.abs(delta), notional: Math.abs(delta) * Number(trade.px), price: Number(trade.px), time: trade.time };
+    const group = { wallet, coin, before: current.size, after: nextSize, openedAt: current.openedAt, size: Math.abs(delta), notional: Math.abs(delta) * Number(trade.px), price: Number(trade.px), time: trade.time, hash: trade.hash, tid: trade.tid };
     group.timer = setTimeout(() => flushGroup(groupKey).catch(console.error), aggregateDelay); pending.set(groupKey, group);
   }
 }
 
 function handleTrades(trades) {
-  for (const trade of trades ?? []) for (const [index, address] of (trade.users ?? []).entries()) {
+  for (const trade of trades ?? []) { latestPrices.set(trade.coin, Number(trade.px)); for (const [index, address] of (trade.users ?? []).entries()) {
     const wallet = String(address).toLowerCase(); if (targetWallets.has(wallet)) recordTrade(trade, wallet, index === 0 ? "BUY" : "SELL");
-  }
+  } }
 }
 
 async function connectMarkets() {
@@ -186,7 +261,7 @@ async function connectMarkets() {
   socket = new WebSocket("wss://api.hyperliquid.xyz/ws");
   socket.onopen = () => {
     marketSubscriptions.forEach((coin) => socket.send(JSON.stringify({ method: "subscribe", subscription: { type: "trades", coin } })));
-    console.log(`Market stream connected: ${marketSubscriptions.length} markets, ${targetWallets.size} favorite wallets`);
+    console.log(`Market stream connected: ${marketSubscriptions.length} markets, ${targetWallets.size} indexed wallets, ${exactWallets.size} exact`);
   };
   socket.onmessage = ({ data }) => { try { const message = JSON.parse(data); if (message.channel === "trades") handleTrades(message.data); } catch (error) { console.error("WebSocket message:", error.message); } };
   socket.onclose = async () => { if (!running) return; console.error("Market stream disconnected; resyncing positions"); await sleep(3_000); await refreshTargets(true); connectMarkets().catch(console.error); };
@@ -200,7 +275,9 @@ await telegram("setMyCommands", { commands: [
 ] });
 marketSubscriptions = await marketCatalog();
 await refreshTargets();
-setInterval(() => refreshTargets().catch(console.error), 15_000);
+setInterval(() => refreshTargets().catch(console.error), 180_000);
+setInterval(() => syncExactHistory().catch(console.error), 60_000);
+syncExactHistory().catch(console.error);
 setInterval(() => socket?.readyState === WebSocket.OPEN && socket.send(JSON.stringify({ method: "ping" })), 45_000);
 process.on("SIGINT", () => { running = false; socket?.close(); process.exit(0); });
 console.log("Deep Current collector started");

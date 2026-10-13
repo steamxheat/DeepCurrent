@@ -54,7 +54,7 @@ export function filterWallets(wallets: WalletRow[], filters: WalletFilters, favo
     return true;
   });
   const sign = direction === "asc" ? 1 : -1;
-  return rows.sort((a, b) => sign * (sort === "rank" ? a.rank - b.rank : Number(a[sort]) - Number(b[sort])));
+  return rows.sort((a, b) => sign * (sort === "rank" ? a.rank - b.rank : Number(a[sort] ?? -1) - Number(b[sort] ?? -1)));
 }
 
 export function walletInsights(wallets: WalletRow[]) {
@@ -91,7 +91,7 @@ export function filterActivity(fills: PulseFill[], filters: ActivityFilters, fav
 
 const csvCell = (value: unknown) => `"${String(value).replaceAll('"', '""')}"`;
 export function walletsCsv(wallets: WalletRow[]) {
-  return [["rank", "name", "address", "account_value", "24h_pnl", "7d_pnl", "30d_pnl", "30d_roi", "24h_volume"], ...wallets.map((wallet) => [wallet.rank, wallet.name, wallet.address, wallet.accountValue, wallet.dayPnl, wallet.weekPnl, wallet.monthPnl, wallet.monthRoi, wallet.dayVolume])].map((row) => row.map(csvCell).join(",")).join("\n");
+  return [["rank", "name", "address", "account_value", "24h_pnl", "7d_pnl", "30d_pnl", "30d_roi", "24h_volume", "60d_win_rate", "60d_closed_trades", "60d_net_pnl", "vetted_at"], ...wallets.map((wallet) => [wallet.rank, wallet.name, wallet.address, wallet.accountValue, wallet.dayPnl, wallet.weekPnl, wallet.monthPnl, wallet.monthRoi, wallet.dayVolume, wallet.winRate60d ?? "", wallet.trades60d ?? "", wallet.netPnl60d ?? "", wallet.vettedAt ? new Date(wallet.vettedAt).toISOString() : ""])].map((row) => row.map(csvCell).join(",")).join("\n");
 }
 
 export function fillsCsv(fills: PulseFill[]) {

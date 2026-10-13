@@ -85,7 +85,7 @@ export function AdminPanel({ initData, liveWallets, exactLiveWallets, marketCove
         <aside>
           <SectionHead title="Парсер" note="Лимиты и фактическое состояние"/>
           <div className="space-y-4 p-4">
-            <ConfigSelect label="Размер рейтинга" value={snapshot?.config.trackedWallets ?? 500} disabled={Boolean(busy)} onChange={(value) => setConfig("trackedWallets", value)} options={[[100, "100"], [200, "200"], [300, "300"], [500, "500"]]}/>
+            <ConfigSelect label="Размер рейтинга" value={snapshot?.config.trackedWallets ?? 1_000} disabled={Boolean(busy)} onChange={(value) => setConfig("trackedWallets", value)} options={[[100, "100"], [300, "300"], [500, "500"], [750, "750"], [1000, "1000"]]}/>
             <ConfigSelect label="Минимум сигнала" value={snapshot?.config.signalThreshold ?? 5000} disabled={Boolean(busy)} onChange={(value) => setConfig("signalThreshold", value)} options={[[1000, "$1K"], [5000, "$5K"], [10000, "$10K"], [25000, "$25K"], [50000, "$50K"]]}/>
             <ConfigSelect label="Live-рынки" value={snapshot?.config.liveMarkets ?? 900} disabled={Boolean(busy)} onChange={(value) => setConfig("liveMarkets", value)} options={[[100, "100"], [300, "300"], [600, "600"], [900, "Все доступные"]]}/>
             <ConfigSelect label="Окно совпадений" value={snapshot?.config.confluenceMinutes ?? 30} disabled={Boolean(busy)} onChange={(value) => setConfig("confluenceMinutes", value)} options={[[5, "5 мин"], [15, "15 мин"], [30, "30 мин"], [60, "60 мин"], [120, "120 мин"]]}/>

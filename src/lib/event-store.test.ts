@@ -1,0 +1,32 @@
+import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+test("event journal deduplicates fills and preserves provenance", async () => {
+  const old = process.env.DEEPCURRENT_DB_PATH;
+  process.env.DEEPCURRENT_DB_PATH = path.join(mkdtempSync(path.join(tmpdir(), "dc-events-")), "events.sqlite");
+  const store = await import(`./event-store.ts?test=${Date.now()}`);
+  const event = { eventKey: "0xabc:7", wallet: "0xABC", coin: "BTC", action: "OPEN", direction: "LONG", time: 123, source: "Hyperliquid userFills", precision: "exact" as const };
+  assert.equal(store.recordWalletEvent(event), true);
+  assert.equal(store.recordWalletEvent(event), false);
+  const stored = store.walletJournal("0xabc");
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].wallet, "0xabc");
+  assert.equal(stored[0].source, "Hyperliquid userFills");
+  assert.equal(stored[0].precision, "exact");
+  store.recordOrderEvents([{ eventKey: "order-1", wallet: "0xABC", coin: "BTC", side: "B", status: "canceled", kind: "limit", limitPx: 100, size: 2, time: 124, source: "orders" }]);
+  store.recordFundingEvents([{ eventKey: "funding-1", wallet: "0xABC", coin: "BTC", time: 125, amount: -2, rate: .001, size: 2, source: "funding" }]);
+  assert.equal(store.walletOrders("0xabc")[0].status, "canceled");
+  assert.equal(store.walletFunding("0xabc")[0].amount, -2);
+  store.recordCompletedTrades("0xABC", [{ coin: "BTC", direction: "LONG", openedAt: 100, closedAt: 200, entryPx: 90, exitPx: 100, size: 2, netPnl: 20 }]);
+  assert.equal(store.walletCompletedTrades("0xabc")[0].netPnl, 20);
+  const snapshot = { wallet: "0xABC", coin: "BTC", capturedAt: 200, size: 2, entryPx: 90, positionValue: 180, unrealizedPnl: 0, leverage: 5, liquidationPx: null, marginUsed: 36, source: "state" };
+  store.recordPositionSnapshots([snapshot]); store.recordPositionSnapshots([{ ...snapshot, capturedAt: 300, leverage: 10 }]);
+  assert.equal(store.walletJournal("0xabc").some((row: { action: string; beforeSize?: number; afterSize?: number }) => row.action === "LEVERAGE" && row.beforeSize === 5 && row.afterSize === 10), true);
+  store.recordWalletScreening({ address: "0xABC", platform: "hyperliquid", windowDays: 60, trades: 20, wins: 17, winRate: 85, netPnl: 1_000, volume: 50_000, lastActive: 300, score: 120, historyComplete: true, qualifies: true, reason: "qualified", screenedAt: 400 });
+  assert.equal(store.walletScreenings(true, 1_000, 0)[0].address, "0xabc");
+  assert.equal(store.screenedWalletAddresses(0).has("0xabc"), true);
+  process.env.DEEPCURRENT_DB_PATH = old;
+});

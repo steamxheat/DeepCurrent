@@ -88,7 +88,7 @@ export async function setAdminRole(initData: string, userId: string, isAdmin: bo
 
 export async function setTrackedWallets(initData: string, value: number) {
   await requireAdmin(initData);
-  const trackedWallets = Math.max(100, Math.min(500, Math.round(value / 50) * 50));
+  const trackedWallets = Math.max(100, Math.min(1_000, Math.round(value / 50) * 50));
   return mutate((state) => { state.config.trackedWallets = trackedWallets; return trackedWallets; });
 }
 

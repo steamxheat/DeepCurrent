@@ -2,14 +2,25 @@ import "server-only";
 import { closedTrades, mergeFills, positionOpenedAt, type ClosedTrade, type Fill } from "./stats";
 import { normalizePerpPortfolio, type PortfolioRange, type PortfolioSeries, type RawPortfolioEntry } from "./portfolio";
 import { getAdminConfig, type AdminConfig } from "./admin-store";
-import { walletQuality } from "./wallet-quality";
+import { hasPositiveMonthPnl, walletQuality } from "./wallet-quality";
 import { displayCoin, spotCoinNames, type SpotMeta } from "./live";
+import { copyabilityScore, type CopyabilityAnalysis } from "./copyability";
+import { coinFlowChange } from "./coin-intelligence";
+import { fetchWithRetry } from "./fetch-retry";
+import {
+  coinJournal, copySamplesForWallet, latestCoinSnapshots, recordCompletedTrades, recordFundingEvents, recordOrderEvents,
+  recordPositionSnapshots, recordWalletEvent, walletCompletedTrades, walletFunding, walletJournal, walletOrders, walletScreenings,
+  type FundingEvent, type JournalEvent, type OrderEvent,
+} from "./event-store";
 
 const INFO_URL = "https://api.hyperliquid.xyz/info";
 const LEADERBOARD_URL = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard";
 let leaderboardCache: { expires: number; rows: WalletRow[]; sourceCount: number } | undefined;
+let marketMoversCache: { expires: number; value: { gainers: MarketMover[]; losers: MarketMover[]; partial: boolean } } | undefined;
 type WalletFillCache = { fills: Fill[]; recentStart: number; backfillStart: number; complete: boolean; usedAt: number };
 const walletFillCache = new Map<string, WalletFillCache>();
+const infoFallbackCache = new Map<string, { value: unknown; storedAt: number }>();
+let infoFallbackHits = 0;
 type WindowName = "day" | "week" | "month" | "allTime";
 type WindowPerformance = [WindowName, { pnl: string; roi: string; vlm: string }];
 type RawLeaderboardRow = { ethAddress: string; accountValue: string; windowPerformances: WindowPerformance[]; displayName?: string | null };
@@ -24,12 +35,17 @@ type RawState = {
 };
 type RawSpotState = { balances?: { coin: string; token: number; total: string; hold: string; entryNtl?: string }[] };
 type RawMeta = { universe?: { name?: string }[] };
-type RawAssetContext = { dayNtlVlm?: string };
+type RawAssetContext = { dayNtlVlm?: string; markPx?: string; oraclePx?: string; openInterest?: string; funding?: string; prevDayPx?: string };
 type RawPerpDex = { name?: string } | null;
+type RawOrder = { order?: { coin?: string; side?: string; limitPx?: string; sz?: string; oid?: number; timestamp?: number; origSz?: string; orderType?: unknown; reduceOnly?: boolean }; status?: string; statusTimestamp?: number };
+type RawFunding = { time?: number; hash?: string; delta?: { coin?: string; usdc?: string; szi?: string; fundingRate?: string } };
+type RawLedger = { time?: number; hash?: string; delta?: { type?: string; token?: string; amount?: string; usdcValue?: string } };
+type RawCandle = { t: number; T: number; s: string; i: string; o: string; c: string; h: string; l: string; v: string; n: number };
 
 export type WalletRow = {
   rank: number; address: string; name: string; accountValue: number; dayPnl: number;
-  dayRoi: number; dayVolume: number; weekPnl: number; monthPnl: number; monthRoi: number;
+  dayRoi: number; dayVolume: number; weekPnl: number; monthPnl: number; monthRoi: number; qualityScore?: number;
+  winRate60d?: number; trades60d?: number; netPnl60d?: number; vettedAt?: number;
 };
 export type PulseFill = Fill & { wallet: string; walletName: string; source?: "user" | "market" };
 export type CoinFlow = { coin: string; buys: number; sells: number; realizedPnl: number; trades: number; wallets: number };
@@ -44,21 +60,43 @@ export type DashboardData = {
 export type Position = {
   coin: string; size: number; entryPx: number; positionValue: number;
   unrealizedPnl: number; leverage: number; liquidationPx: number | null; openedAt: number | null;
+  openedAtPrecision?: "reconstructed" | "unknown";
 };
+export type WalletDataQuality = { updatedAt: number; source: string; historyComplete: boolean; oldestFill: number | null; journalEvents: number; exactFills: number; ordersCaptured: number; fundingCaptured: number };
 export type { PortfolioRange, PortfolioSeries } from "./portfolio";
 export type WalletDetail = {
   address: string; accountValue: number; totalMarginUsed: number; withdrawable: number;
   positions: Position[]; spotBalances: { coin: string; total: number; hold: number }[]; fills: Fill[]; closedTrades: ClosedTrade[];
-  positionHistoryStart: number | null; portfolio: Record<PortfolioRange, PortfolioSeries>; updatedAt: number;
+  positionHistoryStart: number | null; positionHistoryComplete: boolean; portfolio: Record<PortfolioRange, PortfolioSeries>; updatedAt: number;
+  copyability: CopyabilityAnalysis; journal: JournalEvent[]; orders: OrderEvent[]; funding: FundingEvent[]; dataQuality: WalletDataQuality;
+};
+export type CoinDetail = {
+  coin: string; markPx: number; oraclePx: number; change24h: number; volume24h: number; openInterest: number; funding: number;
+  candles: Array<{ time: number; open: number; close: number; high: number; low: number; volume: number }>;
+  events: JournalEvent[]; snapshots: ReturnType<typeof latestCoinSnapshots>;
+  changes: Record<"5m" | "1h" | "4h" | "24h", { long: number; short: number; net: number; wallets: number }>;
+  updatedAt: number; source: string;
 };
 
 async function info<T>(body: Record<string, unknown>, revalidate: number): Promise<T> {
-  const response = await fetch(INFO_URL, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-    ...(revalidate <= 2 ? { cache: "no-store" as const } : { cache: "force-cache" as const, next: { revalidate } }),
-  });
-  if (!response.ok) throw new Error(`Hyperliquid API: ${response.status}`);
-  return response.json() as Promise<T>;
+  const serialized = JSON.stringify(body); const key = `${revalidate}:${serialized}`;
+  try {
+    const response = await fetchWithRetry(() => fetch(INFO_URL, {
+      method: "POST", headers: { "content-type": "application/json" }, body: serialized,
+      ...(revalidate <= 2 ? { cache: "no-store" as const } : { cache: "force-cache" as const, next: { revalidate } }),
+    }));
+    if (!response.ok) throw new Error(`Hyperliquid API: ${response.status}`);
+    const value = await response.json() as T;
+    if (!["userFills", "userFillsByTime", "historicalOrders", "userFunding", "userNonFundingLedgerUpdates"].includes(String(body.type))) {
+      infoFallbackCache.set(key, { value, storedAt: Date.now() });
+      if (infoFallbackCache.size > 200) infoFallbackCache.delete(infoFallbackCache.keys().next().value!);
+    }
+    return value;
+  } catch (error) {
+    const fallback = infoFallbackCache.get(key);
+    if (fallback && Date.now() - fallback.storedAt <= 300_000) { infoFallbackHits += 1; return fallback.value as T; }
+    throw error;
+  }
 }
 
 async function getWalletFills(address: string) {
@@ -69,7 +107,7 @@ async function getWalletFills(address: string) {
     const recentStart = fills.length ? Math.min(...fills.map((fill) => fill.time)) : 0;
     const entry = { fills, recentStart, backfillStart: 0, complete: fills.length < 2_000, usedAt: Date.now() };
     walletFillCache.set(key, entry);
-    return { fills, analysisFills: fills };
+    return { fills, analysisFills: fills, complete: entry.complete };
   }
 
   const latestTime = cached.fills[0]?.time ?? 0;
@@ -77,17 +115,19 @@ async function getWalletFills(address: string) {
   const backfillPromise = cached.complete
     ? Promise.resolve<Fill[]>([])
     : info<Fill[]>({ type: "userFillsByTime", user: address, startTime: cached.backfillStart, aggregateByTime: true }, 2);
-  const [latest, backfill] = await Promise.all([latestPromise, backfillPromise]);
+  const [latestResult, backfillResult] = await Promise.allSettled([latestPromise, backfillPromise]);
+  const latest = latestResult.status === "fulfilled" ? latestResult.value : [];
+  const backfill = backfillResult.status === "fulfilled" ? backfillResult.value : [];
   const fills = mergeFills(cached.fills, latest, backfill);
   const nextStart = backfill.length ? Math.max(...backfill.map((fill) => fill.time)) : cached.backfillStart;
-  const complete = cached.complete || backfill.length < 2_000 || nextStart >= cached.recentStart;
+  const complete = cached.complete || (backfillResult.status === "fulfilled" && (backfill.length < 2_000 || nextStart >= cached.recentStart));
   const entry = { ...cached, fills, backfillStart: nextStart, complete, usedAt: Date.now() };
   walletFillCache.set(key, entry);
   if (walletFillCache.size > 100) {
     const oldest = [...walletFillCache].sort((a, b) => a[1].usedAt - b[1].usedAt)[0]?.[0];
     if (oldest) walletFillCache.delete(oldest);
   }
-  return { fills, analysisFills: complete ? fills : fills.filter((fill) => fill.time >= cached.recentStart) };
+  return { fills, analysisFills: complete ? fills : fills.filter((fill) => fill.time >= cached.recentStart), complete };
 }
 
 function performance(row: RawLeaderboardRow, name: WindowName) {
@@ -96,12 +136,11 @@ function performance(row: RawLeaderboardRow, name: WindowName) {
 }
 
 async function getLeaderboard(limit: number) {
-  // shortcut: this public leaderboard feed is undocumented, replace it with a persisted vetted registry before production.
   if (leaderboardCache && leaderboardCache.expires > Date.now()) return { rows: leaderboardCache.rows.slice(0, limit), sourceCount: leaderboardCache.sourceCount };
   const response = await fetch(LEADERBOARD_URL, { cache: "no-store" });
   if (!response.ok) throw new Error(`Leaderboard: ${response.status}`);
   const payload = await response.json() as { leaderboardRows: RawLeaderboardRow[] };
-  const rows = payload.leaderboardRows.map((row) => {
+  const candidates = payload.leaderboardRows.map((row) => {
     const day = performance(row, "day");
     const week = performance(row, "week");
     const month = performance(row, "month");
@@ -112,9 +151,19 @@ async function getLeaderboard(limit: number) {
       dayVolume: day.vlm, weekPnl: week.pnl, monthPnl: month.pnl, monthRoi: month.roi,
       score: walletQuality({ accountValue: Number(row.accountValue), monthPnl: month.pnl, monthVolume: month.vlm, weekPnl: week.pnl, monthRoi: month.roi, dayPnl: day.pnl }),
     };
-  }).filter((row): row is typeof row & { score: number } => row.score !== null)
-    .sort((a, b) => b.score - a.score).slice(0, 500)
-    .map((row, index) => ({ rank: index + 1, address: row.address, name: row.name, accountValue: row.accountValue, dayPnl: row.dayPnl, dayRoi: row.dayRoi, dayVolume: row.dayVolume, weekPnl: row.weekPnl, monthPnl: row.monthPnl, monthRoi: row.monthRoi }));
+  });
+  const verified = walletScreenings(true, 5_000); const verifiedByAddress = new Map(verified.map((row) => [row.address, row]));
+  const candidateByAddress = new Map(candidates.map((row) => [row.address.toLowerCase(), row]));
+  const selected = verified.flatMap((screening) => {
+    const row = candidateByAddress.get(screening.address); return row && hasPositiveMonthPnl(row.monthPnl) ? [{ ...row, score: row.score ?? screening.score }] : [];
+  }).slice(0, 1_000);
+  const rows = selected.map((row, index, all) => {
+      const low = all.at(-1)?.score ?? row.score; const high = all[0]?.score ?? row.score;
+      const qualityScore = high === low ? 50 : Math.round(40 + (row.score - low) / (high - low) * 60);
+      const screening = verifiedByAddress.get(row.address.toLowerCase());
+      return { rank: index + 1, address: row.address, name: row.name, accountValue: row.accountValue, dayPnl: row.dayPnl, dayRoi: row.dayRoi, dayVolume: row.dayVolume, weekPnl: row.weekPnl, monthPnl: row.monthPnl, monthRoi: row.monthRoi, qualityScore,
+        ...(screening ? { winRate60d: screening.winRate, trades60d: screening.trades, netPnl60d: screening.netPnl, vettedAt: screening.screenedAt } : {}) };
+    });
   leaderboardCache = { expires: Date.now() + 180_000, rows, sourceCount: payload.leaderboardRows.length };
   return { rows: rows.slice(0, limit), sourceCount: payload.leaderboardRows.length };
 }
@@ -138,15 +187,15 @@ async function getMarketCatalog(limit: number) {
 
 async function getRecentFills(wallets: WalletRow[], coinNames: Record<string, string>) {
   const tracked = [...wallets].sort((a, b) => b.dayVolume - a.dayVolume).slice(0, 10);
-  const startTime = Date.now() - 30 * 60 * 1000;
+  const startTime = Date.now() - 24 * 60 * 60 * 1_000;
   const responses = await Promise.allSettled(tracked.map(async (wallet) => {
     const fills = await info<Fill[]>({ type: "userFillsByTime", user: wallet.address, startTime, aggregateByTime: true }, 25);
-    return fills.slice(0, 80).map((fill) => ({ ...fill, coin: displayCoin(fill.coin, coinNames), wallet: wallet.address, walletName: wallet.name, source: "user" as const }));
+    return fills.slice(0, 120).map((fill) => ({ ...fill, coin: displayCoin(fill.coin, coinNames), wallet: wallet.address, walletName: wallet.name, source: "user" as const }));
   }));
   return {
     tracked: tracked.map(({ address, name }) => ({ address, name })),
     fills: responses.flatMap((result) => result.status === "fulfilled" ? result.value : [])
-      .sort((a, b) => b.time - a.time).slice(0, 120),
+      .sort((a, b) => b.time - a.time),
   };
 }
 
@@ -176,12 +225,13 @@ const ignoredBases = new Set(["USDT", "USDC", "FDUSD", "TUSD", "DAI", "USDE", "U
 const validMover = (symbol: string, volume: number) => symbol.endsWith("USDT") && volume >= 1_000_000 && !ignoredBases.has(symbol.slice(0, -4)) && !/(UP|DOWN|BULL|BEAR)$/.test(symbol.slice(0, -4));
 
 async function getMarketMovers() {
+  if (marketMoversCache && marketMoversCache.expires > Date.now()) return marketMoversCache.value;
   const [binance, bybit] = await Promise.allSettled([
-    fetch("https://api.binance.com/api/v3/ticker/24hr", { cache: "force-cache", next: { revalidate: 45 } }).then(async (response) => {
+    fetch("https://api.binance.com/api/v3/ticker/24hr", { cache: "no-store" }).then(async (response) => {
       if (!response.ok) throw new Error(`Binance: ${response.status}`);
       return response.json() as Promise<{ symbol: string; lastPrice: string; priceChangePercent: string; quoteVolume: string }[]>;
     }),
-    fetch("https://api.bybit.com/v5/market/tickers?category=spot", { cache: "force-cache", next: { revalidate: 45 } }).then(async (response) => {
+    fetch("https://api.bybit.com/v5/market/tickers?category=spot", { cache: "no-store" }).then(async (response) => {
       if (!response.ok) throw new Error(`Bybit: ${response.status}`);
       return response.json() as Promise<{ result?: { list?: { symbol: string; lastPrice: string; price24hPcnt: string; turnover24h: string }[] } }>;
     }),
@@ -192,11 +242,12 @@ async function getMarketMovers() {
   const deduped = [...rows.reduce((map, row) => {
     const current = map.get(row.symbol); if (!current || row.volume > current.volume) map.set(row.symbol, row); return map;
   }, new Map<string, MarketMover>()).values()];
-  return {
+  const value = {
     gainers: deduped.filter((row) => row.change > 0).sort((a, b) => b.change - a.change).slice(0, 20),
     losers: deduped.filter((row) => row.change < 0).sort((a, b) => a.change - b.change).slice(0, 20),
     partial: binance.status === "rejected" || bybit.status === "rejected",
   };
+  marketMoversCache = { expires: Date.now() + 45_000, value }; return value;
 }
 
 export async function getDashboardData(): Promise<DashboardData> {
@@ -228,39 +279,127 @@ export async function getDashboardData(): Promise<DashboardData> {
   };
 }
 
+function fillLifecycle(fill: Fill) {
+  const before = Number(fill.startPosition); const delta = Number(fill.sz) * (fill.side === "B" ? 1 : -1);
+  if (!Number.isFinite(before)) return { action: fill.side === "B" ? "BUY" : "SELL", direction: fill.side === "B" ? "LONG" : "SHORT", after: undefined, precision: "observed" as const };
+  const after = Math.abs(before + delta) < 1e-9 ? 0 : before + delta;
+  const action = before === 0 ? "OPEN" : after === 0 ? "CLOSE" : Math.sign(before) !== Math.sign(after) ? "FLIP" : Math.abs(after) > Math.abs(before) ? "ADD" : "REDUCE";
+  return { action, direction: (after || before) > 0 ? "LONG" : "SHORT", after, precision: "exact" as const };
+}
+
+const eventKey = (wallet: string, fill: Fill) => `${wallet.toLowerCase()}:${fill.hash}:${fill.tid ?? `${fill.coin}:${fill.time}:${fill.side}:${fill.sz}`}`;
+
 export async function getWalletDetail(address: string): Promise<WalletDetail> {
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error("Некорректный адрес кошелька");
-  const [history, portfolio, spotMeta, spotState] = await Promise.all([
+  const now = Date.now(); const fallbackStart = infoFallbackHits;
+  const [history, portfolio, spotMeta, spotState, rawOrders, rawFunding, rawLedger] = await Promise.all([
     getWalletFills(address),
-    info<RawPortfolioEntry[]>({ type: "portfolio", user: address }, 30),
+    info<RawPortfolioEntry[]>({ type: "portfolio", user: address }, 30).catch(() => []),
     info<SpotMeta>({ type: "spotMeta" }, 3_600).catch(() => ({ universe: [], tokens: [] })),
     info<RawSpotState>({ type: "spotClearinghouseState", user: address }, 2).catch(() => ({ balances: [] })),
+    info<RawOrder[]>({ type: "historicalOrders", user: address }, 30).catch(() => []),
+    info<RawFunding[]>({ type: "userFunding", user: address, startTime: now - 30 * 86_400_000 }, 30).catch(() => []),
+    info<RawLedger[]>({ type: "userNonFundingLedgerUpdates", user: address, startTime: now - 30 * 86_400_000 }, 30).catch(() => []),
   ]);
   const { fills, analysisFills } = history;
   // shortcut: query only DEXes present in recent fills; all-DEX live updates come from the wallet WebSocket.
   const dexNames = ["", ...new Set(fills.flatMap((fill) => fill.coin.includes(":") ? [fill.coin.split(":", 1)[0]] : []))];
-  const stateResults = await Promise.allSettled(dexNames.map((dex) => info<RawState>({ type: "clearinghouseState", user: address, ...(dex ? { dex } : {}) }, 2)));
+  const [stateResults, contextResults] = await Promise.all([
+    Promise.allSettled(dexNames.map((dex) => info<RawState>({ type: "clearinghouseState", user: address, ...(dex ? { dex } : {}) }, 2))),
+    Promise.allSettled(dexNames.map((dex) => info<[RawMeta, RawAssetContext[]]>({ type: "metaAndAssetCtxs", ...(dex ? { dex } : {}) }, 15))),
+  ]);
   const states = stateResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
   const coinNames = spotCoinNames(spotMeta);
   const normalizedPortfolio = normalizePerpPortfolio(portfolio);
   const normalizeFill = (fill: Fill): Fill => ({
     coin: displayCoin(fill.coin, coinNames), px: fill.px, sz: fill.sz, side: fill.side, time: fill.time,
     dir: fill.dir, closedPnl: fill.closedPnl, fee: fill.fee, hash: fill.hash, tid: fill.tid, startPosition: fill.startPosition,
+    crossed: fill.crossed, feeToken: fill.feeToken, source: "user",
   });
   const normalizedFills = fills.map(normalizeFill);
   const normalizedAnalysisFills = analysisFills.map(normalizeFill);
-  const positions = states.flatMap((state) => state.assetPositions ?? []).map(({ position }) => ({
-    coin: displayCoin(position.coin, coinNames), size: Number(position.szi), entryPx: Number(position.entryPx), openedAt: positionOpenedAt(Number(position.szi), position.coin, analysisFills),
+  const positions = states.flatMap((state) => state.assetPositions ?? []).map(({ position }) => {
+    const openedAt = positionOpenedAt(Number(position.szi), position.coin, analysisFills);
+    return {
+    coin: displayCoin(position.coin, coinNames), size: Number(position.szi), entryPx: Number(position.entryPx), openedAt, openedAtPrecision: openedAt ? "reconstructed" as const : "unknown" as const,
     positionValue: Number(position.positionValue), unrealizedPnl: Number(position.unrealizedPnl),
     leverage: Number(position.leverage?.value ?? 1), liquidationPx: position.liquidationPx ? Number(position.liquidationPx) : null,
-  })).filter((position) => position.size).sort((a, b) => Math.abs(b.positionValue) - Math.abs(a.positionValue));
+  }; }).filter((position) => position.size).sort((a, b) => Math.abs(b.positionValue) - Math.abs(a.positionValue));
+  const marketVolumes = Object.fromEntries(contextResults.flatMap((result) => result.status === "fulfilled"
+    ? (result.value[0].universe ?? []).map((asset, index) => [displayCoin(asset.name ?? "", coinNames), Number(result.value[1][index]?.dayNtlVlm ?? 0)]) : []));
+  for (const fill of normalizedFills) {
+    const lifecycle = fillLifecycle(fill);
+    recordWalletEvent({ eventKey: eventKey(address, fill), wallet: address, coin: fill.coin, action: lifecycle.action, direction: lifecycle.direction,
+      time: fill.time, price: Number(fill.px), size: Number(fill.sz), notional: Math.abs(Number(fill.px) * Number(fill.sz)),
+      beforeSize: Number.isFinite(Number(fill.startPosition)) ? Number(fill.startPosition) : undefined, afterSize: lifecycle.after,
+      fee: Number(fill.fee || 0), realizedPnl: Number(fill.closedPnl || 0), source: "Hyperliquid userFills", precision: lifecycle.precision,
+      hash: fill.hash, tid: fill.tid });
+  }
+  recordPositionSnapshots(positions.map((position) => ({ wallet: address, coin: position.coin, capturedAt: now, size: position.size, entryPx: position.entryPx,
+    positionValue: position.positionValue, unrealizedPnl: position.unrealizedPnl, leverage: position.leverage, liquidationPx: position.liquidationPx,
+    marginUsed: Math.abs(position.positionValue) / Math.max(1, position.leverage), source: "Hyperliquid clearinghouseState" })));
+  const orders: OrderEvent[] = rawOrders.slice(0, 500).flatMap((row) => row.order?.coin ? [{
+    eventKey: `${address.toLowerCase()}:order:${row.order.oid ?? "unknown"}:${row.status ?? "unknown"}:${row.statusTimestamp ?? row.order.timestamp ?? 0}`,
+    wallet: address, coin: displayCoin(row.order.coin, coinNames), side: row.order.side ?? "—", status: row.status ?? "unknown",
+    kind: typeof row.order.orderType === "string" ? row.order.orderType : row.order.reduceOnly ? "reduce-only" : "limit",
+    limitPx: Number(row.order.limitPx ?? 0), size: Number(row.order.origSz ?? row.order.sz ?? 0),
+    time: Number(row.statusTimestamp ?? row.order.timestamp ?? 0), source: "Hyperliquid historicalOrders",
+  }] : []);
+  const funding: FundingEvent[] = rawFunding.slice(0, 1_000).flatMap((row) => row.delta?.coin && row.time ? [{
+    eventKey: `${address.toLowerCase()}:funding:${row.hash ?? `${row.delta.coin}:${row.time}`}`, wallet: address,
+    coin: displayCoin(row.delta.coin, coinNames), time: row.time, amount: Number(row.delta.usdc ?? 0), rate: Number(row.delta.fundingRate ?? 0),
+    size: Number(row.delta.szi ?? 0), source: "Hyperliquid userFunding",
+  }] : []);
+  recordOrderEvents(orders); recordFundingEvents(funding);
+  for (const row of rawLedger) if (row.time && row.delta?.type) recordWalletEvent({
+    eventKey: `${address.toLowerCase()}:ledger:${row.hash ?? `${row.delta.type}:${row.time}`}`, wallet: address,
+    coin: displayCoin(row.delta.token ?? "USDC", coinNames), action: `LEDGER ${row.delta.type.replaceAll(/([a-z])([A-Z])/g, "$1 $2").toUpperCase()}`,
+    time: row.time, size: Number(row.delta.amount ?? 0), notional: Math.abs(Number(row.delta.usdcValue ?? row.delta.amount ?? 0)),
+    source: "Hyperliquid userNonFundingLedgerUpdates", precision: "exact", hash: row.hash,
+  });
+  const storedOrders = walletOrders(address, 500); const storedFunding = walletFunding(address, 1_000);
+  const journal = [...new Map([
+    ...walletJournal(address, 1_000),
+    ...storedOrders.slice(0, 100).map((order): JournalEvent => ({ eventKey: order.eventKey, wallet: address, coin: order.coin, action: `ORDER ${order.status.toUpperCase()}`, direction: order.side, time: order.time, price: order.limitPx, size: order.size, notional: order.limitPx * order.size, source: order.source, precision: "exact" })),
+    ...storedFunding.slice(0, 100).map((row): JournalEvent => ({ eventKey: row.eventKey, wallet: address, coin: row.coin, action: "FUNDING", time: row.time, realizedPnl: row.amount, source: row.source, precision: "exact" })),
+  ].map((event) => [event.eventKey, event] as const)).values()].sort((left, right) => right.time - left.time).slice(0, 1_000);
+  const calculatedTrades = closedTrades(normalizedAnalysisFills).slice(0, 500); recordCompletedTrades(address, calculatedTrades);
+  const completedTrades = [...new Map([...calculatedTrades, ...walletCompletedTrades(address)].map((trade) => [`${trade.coin}:${trade.direction}:${trade.closedAt}`, trade])).values()]
+    .sort((left, right) => right.closedAt - left.closedAt).slice(0, 500);
+  const copyability = copyabilityScore({ fills: normalizedFills, closedTrades: completedTrades, accountValue: normalizedPortfolio.month.accountValue, marketVolumes, samples: copySamplesForWallet(address) });
+  const updatedAt = Date.now();
   return {
     address, accountValue: states.reduce((sum, state) => sum + Number(state.marginSummary?.accountValue ?? 0), 0),
     totalMarginUsed: states.reduce((sum, state) => sum + Number(state.marginSummary?.totalMarginUsed ?? 0), 0), withdrawable: states.reduce((sum, state) => sum + Number(state.withdrawable ?? 0), 0),
     positions,
     spotBalances: (spotState.balances ?? []).map((balance) => ({ coin: balance.coin, total: Number(balance.total), hold: Number(balance.hold) })).filter((balance) => balance.total || balance.hold).sort((a, b) => b.total - a.total),
-    fills: normalizedFills.slice(0, 1_000), closedTrades: closedTrades(normalizedAnalysisFills).slice(0, 50),
+    fills: normalizedFills.slice(0, 1_000), closedTrades: completedTrades.slice(0, 50),
     positionHistoryStart: analysisFills.length ? Math.min(...analysisFills.map((fill) => fill.time)) : null,
-    portfolio: normalizedPortfolio, updatedAt: Date.now(),
+    positionHistoryComplete: history.complete,
+    portfolio: normalizedPortfolio, updatedAt, copyability, journal, orders: storedOrders, funding: storedFunding,
+    dataQuality: { updatedAt, source: infoFallbackHits > fallbackStart ? "Hyperliquid API · резерв из кеша до 5 минут" : "Hyperliquid public API", historyComplete: history.complete,
+      oldestFill: analysisFills.length ? Math.min(...analysisFills.map((fill) => fill.time)) : null,
+      journalEvents: journal.length, exactFills: normalizedFills.filter((fill) => Number.isFinite(Number(fill.startPosition))).length,
+      ordersCaptured: storedOrders.length, fundingCaptured: storedFunding.length },
   };
+}
+
+export async function getCoinDetail(coin: string): Promise<CoinDetail> {
+  const safeCoin = decodeURIComponent(coin); const dex = safeCoin.includes(":") ? safeCoin.split(":", 1)[0] : "";
+  const rawCoin = dex ? safeCoin.slice(dex.length + 1) : safeCoin;
+  const endTime = Date.now(); const startTime = endTime - 7 * 86_400_000;
+  const [context, candles] = await Promise.all([
+    info<[RawMeta, RawAssetContext[]]>({ type: "metaAndAssetCtxs", ...(dex ? { dex } : {}) }, 15),
+    info<RawCandle[]>({ type: "candleSnapshot", req: { coin: safeCoin, interval: "15m", startTime, endTime } }, 15).catch(() => []),
+  ]);
+  const index = (context[0].universe ?? []).findIndex((asset) => asset.name === safeCoin || asset.name === rawCoin);
+  if (index < 0) throw new Error(`Рынок ${safeCoin} не найден`);
+  const market = context[1][index] ?? {}; const markPx = Number(market.markPx ?? 0); const previous = Number(market.prevDayPx ?? markPx);
+  const events = coinJournal(safeCoin, endTime - 86_400_000); const snapshots = latestCoinSnapshots(safeCoin);
+  const windows = { "5m": 300_000, "1h": 3_600_000, "4h": 14_400_000, "24h": 86_400_000 } as const;
+  const changes = Object.fromEntries(Object.entries(windows).map(([label, duration]) => [label, coinFlowChange(events, endTime, duration)])) as CoinDetail["changes"];
+  return { coin: safeCoin, markPx, oraclePx: Number(market.oraclePx ?? 0), change24h: previous ? (markPx - previous) / previous * 100 : 0,
+    volume24h: Number(market.dayNtlVlm ?? 0), openInterest: Number(market.openInterest ?? 0), funding: Number(market.funding ?? 0),
+    candles: candles.map((row) => ({ time: row.t, open: Number(row.o), close: Number(row.c), high: Number(row.h), low: Number(row.l), volume: Number(row.v) })),
+    events, snapshots, changes, updatedAt: endTime, source: "Hyperliquid public API + Deep Current journal" };
 }

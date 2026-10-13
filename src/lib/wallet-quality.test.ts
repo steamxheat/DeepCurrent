@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { walletQuality } from "./wallet-quality.ts";
+import { hasPositiveMonthPnl, walletQuality } from "./wallet-quality.ts";
+
+test("positive 30D PnL excludes zero, losses and invalid values", () => {
+  assert.equal(hasPositiveMonthPnl(1), true);
+  assert.equal(hasPositiveMonthPnl(0), false);
+  assert.equal(hasPositiveMonthPnl(-1), false);
+  assert.equal(hasPositiveMonthPnl(Number.NaN), false);
+});
 
 test("wallet quality rejects weak histories and rewards durable profit", () => {
   assert.equal(walletQuality({ accountValue: 99_999, monthPnl: 20_000, monthVolume: 2_000_000, weekPnl: 1, monthRoi: 20, dayPnl: 1 }), null);

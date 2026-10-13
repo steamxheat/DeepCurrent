@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { activityKind, marketIdentity, spotCoinNames, tradeFills } from "./live.ts";
+import { activityKind, marketIdentity, mergePulseFills, spotCoinNames, tradeFills } from "./live.ts";
 
 test("spot markets and public trades become readable wallet activity", () => {
   const names = spotCoinNames({
@@ -20,4 +20,14 @@ test("exact fills distinguish an open from a reduction", () => {
   assert.equal(activityKind({ dir: "Open Long", side: "B", source: "user", startPosition: "0", sz: "2" }).label, "OPEN");
   assert.equal(activityKind({ dir: "Close Long", side: "A", source: "user", startPosition: "2", sz: "1" }).label, "REDUCE");
   assert.equal(activityKind({ dir: "Close Long", side: "A", source: "user", startPosition: "2", sz: "2" }).label, "CLOSE");
+});
+
+test("live buffer preserves exact wallet history when public trades arrive", () => {
+  const exact = Array.from({ length: 130 }, (_, index) => ({ coin: "BTC", px: "100", sz: "1", side: "B" as const, time: index, dir: "Open Long", closedPnl: "0", fee: "0", hash: `exact-${index}`, wallet: "0xbusy", walletName: "Busy", source: "user" as const }));
+  exact.push({ ...exact[0], time: 200, hash: "quiet", wallet: "0xquiet", walletName: "Quiet" });
+  const market = Array.from({ length: 1_000 }, (_, index) => ({ ...exact[0], time: index + 100, hash: `market-${index}`, source: "market" as const }));
+  const merged = mergePulseFills(exact, market);
+  assert.equal(merged.filter((fill) => fill.source !== "market" && fill.wallet === "0xbusy").length, 120);
+  assert.equal(merged.filter((fill) => fill.source !== "market" && fill.wallet === "0xquiet").length, 1);
+  assert.equal(merged.filter((fill) => fill.source === "market").length, 800);
 });

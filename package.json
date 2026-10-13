@@ -10,6 +10,7 @@
     "lint": "eslint",
     "test": "node --experimental-strip-types --test src/lib/*.test.ts",
     "check:live": "node scripts/check-live.mjs",
+    "discover:wallets": "node --experimental-strip-types scripts/discover-wallets.mjs",
     "bot": "node --experimental-strip-types scripts/bot.mjs",
     "collector": "node --experimental-strip-types scripts/bot.mjs"
   },

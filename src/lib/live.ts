@@ -56,6 +56,25 @@ export function tradeFills(trades: MarketTrade[], wallets: Map<string, string>, 
   }));
 }
 
+export function mergePulseFills(current: PulseFill[], incoming: PulseFill[]) {
+  const rows = new Map<string, PulseFill>();
+  for (const fill of [...current, ...incoming]) {
+    const key = `${fill.wallet}:${fill.hash}:${fill.time}:${fill.coin}:${fill.px}:${fill.sz}`;
+    const previous = rows.get(key);
+    if (!previous || (previous.source === "market" && fill.source !== "market")) rows.set(key, fill);
+  }
+  const sorted = [...rows.values()].sort((a, b) => b.time - a.time);
+  const exactCounts = new Map<string, number>();
+  const exact = sorted.filter((fill) => {
+    if (fill.source === "market") return false;
+    const count = exactCounts.get(fill.wallet) ?? 0;
+    if (count >= 120) return false;
+    exactCounts.set(fill.wallet, count + 1); return true;
+  }).slice(0, 1_200);
+  const market = sorted.filter((fill) => fill.source === "market").slice(0, 800);
+  return [...exact, ...market].sort((a, b) => b.time - a.time);
+}
+
 export function activityKind(fill: Pick<PulseFill, "dir" | "side" | "source" | "startPosition" | "sz">) {
   const direction = fill.dir.toLowerCase();
   const before = Number(fill.startPosition);
