@@ -1,11 +1,11 @@
 import { getFillJournal, validWalletAddress } from "@/lib/fill-journal";
 import { readWalletSnapshot } from "@/lib/wallet-snapshot";
+import { isSameOrigin } from "@/lib/request-origin";
 
 export async function POST(request: Request, { params }: { params: Promise<{ address: string }> }) {
   const { address } = await params;
   if (!validWalletAddress(address)) return Response.json({ error: "INVALID_WALLET" }, { status: 400 });
-  const origin = request.headers.get("origin");
-  if (origin && origin !== new URL(request.url).origin) return Response.json({ error: "INVALID_ORIGIN" }, { status: 403 });
+  if (!isSameOrigin(request)) return Response.json({ error: "INVALID_ORIGIN" }, { status: 403 });
   const store = getFillJournal();
   try { store.touchWallet(address); } catch (error) {
     const busy = error instanceof Error && /locked|busy/.test(error.message);

@@ -1,6 +1,7 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
 import type { NextRequest, NextResponse } from "next/server";
+export { isSameOrigin } from "./request-origin.ts";
 
 export const browserSessionCookie = "deep_current_session";
 const browserId = /^web_[a-f0-9]{64}$/;
@@ -23,9 +24,4 @@ export function writeBrowserSession(response: NextResponse, userId: string) {
     maxAge: 365 * 24 * 60 * 60,
     priority: "high",
   });
-}
-
-export function isSameOrigin(request: NextRequest) {
-  const origin = request.headers.get("origin");
-  return !origin || origin === request.nextUrl.origin;
 }
