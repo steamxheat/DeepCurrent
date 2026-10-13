@@ -29,15 +29,15 @@ test("coin flow excludes stale and non-position journal entries", () => {
 test("coin participants prefer a current position and keep observed activity separate", () => {
   const snapshot: PositionSnapshot = { wallet: "0x1", coin: "BTC", capturedAt: 990, size: 2, entryPx: 90, positionValue: 180, unrealizedPnl: 20, leverage: 5, liquidationPx: null, marginUsed: 36, source: "state" };
   const result = coinParticipants([
-    event({ wallet: "0x1", direction: "SHORT", action: "OPEN", notional: 500 }),
-    event({ wallet: "0x2", direction: "SHORT", action: "OPEN", notional: 300 }),
+    event({ wallet: "0x1", walletName: "Alpha", direction: "SHORT", action: "OPEN", notional: 500 }),
+    event({ wallet: "0x2", walletName: "Beta", direction: "SHORT", action: "OPEN", notional: 300 }),
     event({ wallet: "0x2", direction: "SHORT", action: "ADD", notional: 200, time: 950 }),
     event({ wallet: "0x2", direction: "LONG", action: "OPEN", notional: 1_000, time: 800 }),
     event({ wallet: "0x3", direction: "LONG", action: "CLOSE", notional: 900 }),
     event({ wallet: "0x4", direction: "LONG", action: "BUY", notional: 900 }),
   ], [snapshot], 1_000, 500);
   assert.deepEqual(result, [
-    { wallet: "0x1", direction: "LONG", notional: 180, lastTime: 990, events: 0, kind: "position", unrealizedPnl: 20 },
-    { wallet: "0x2", direction: "SHORT", notional: 500, lastTime: 950, events: 2, kind: "activity" },
+    { wallet: "0x1", walletName: "Alpha", direction: "LONG", notional: 180, lastTime: 990, events: 0, kind: "position", unrealizedPnl: 20 },
+    { wallet: "0x2", walletName: "Beta", direction: "SHORT", notional: 500, lastTime: 950, events: 2, kind: "activity" },
   ]);
 });

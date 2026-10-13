@@ -17,7 +17,7 @@ import { availableWalletScreenings } from "./wallet-registry";
 const INFO_URL = "https://api.hyperliquid.xyz/info";
 const LEADERBOARD_URL = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard";
 let leaderboardCache: { expires: number; rows: WalletRow[]; sourceCount: number } | undefined;
-let marketMoversCache: { expires: number; value: { gainers: MarketMover[]; losers: MarketMover[]; partial: boolean } } | undefined;
+let marketMoversCache: { expires: number; value: { gainers: MarketMover[]; losers: MarketMover[]; partial: boolean; positionCoverage: number } } | undefined;
 type WalletFillCache = { fills: Fill[]; complete: boolean; usedAt: number };
 const walletFillCache = new Map<string, WalletFillCache>();
 const infoFallbackCache = new Map<string, { value: unknown; storedAt: number }>();
@@ -259,14 +259,13 @@ async function getMarketMovers() {
   }
   const rows: MarketMover[] = [];
   const mover = (symbol: string, exchange: "Binance" | "Bybit", price: number, change: number, volume: number) => {
-    const positions = coverage.get(symbol); return positions ? { symbol, exchange, price, change, volume, ...positions } : null;
+    const positions = coverage.get(symbol) ?? { wallets: 0, longWallets: 0, shortWallets: 0, longNotional: 0, shortNotional: 0, positionUpdatedAt: 0 };
+    return { symbol, exchange, price, change, volume, ...positions };
   };
-  if (binance.status === "fulfilled") rows.push(...binance.value.filter((item) => validMover(item.symbol, Number(item.quoteVolume))).flatMap((item) => {
-    const row = mover(item.symbol.slice(0, -4), "Binance", Number(item.lastPrice), Number(item.priceChangePercent), Number(item.quoteVolume)); return row ? [row] : [];
-  }));
-  if (bybit.status === "fulfilled") rows.push(...(bybit.value.result?.list ?? []).filter((item) => validMover(item.symbol, Number(item.turnover24h))).flatMap((item) => {
-    const row = mover(item.symbol.slice(0, -4), "Bybit", Number(item.lastPrice), Number(item.price24hPcnt) * 100, Number(item.turnover24h)); return row ? [row] : [];
-  }));
+  if (binance.status === "fulfilled") rows.push(...binance.value.filter((item) => validMover(item.symbol, Number(item.quoteVolume))).map((item) =>
+    mover(item.symbol.slice(0, -4), "Binance", Number(item.lastPrice), Number(item.priceChangePercent), Number(item.quoteVolume))));
+  if (bybit.status === "fulfilled") rows.push(...(bybit.value.result?.list ?? []).filter((item) => validMover(item.symbol, Number(item.turnover24h))).map((item) =>
+    mover(item.symbol.slice(0, -4), "Bybit", Number(item.lastPrice), Number(item.price24hPcnt) * 100, Number(item.turnover24h))));
   const deduped = [...rows.reduce((map, row) => {
     const current = map.get(row.symbol); if (!current || row.volume > current.volume) map.set(row.symbol, row); return map;
   }, new Map<string, MarketMover>()).values()];
@@ -274,6 +273,7 @@ async function getMarketMovers() {
     gainers: deduped.filter((row) => row.change > 0).sort((a, b) => b.change - a.change).slice(0, 20),
     losers: deduped.filter((row) => row.change < 0).sort((a, b) => a.change - b.change).slice(0, 20),
     partial: binance.status === "rejected" || bybit.status === "rejected",
+    positionCoverage: coverage.size,
   };
   marketMoversCache = { expires: Date.now() + 45_000, value }; return value;
 }
@@ -294,10 +294,10 @@ export async function getDashboardData(): Promise<DashboardData> {
   const [pulse, flow, movers] = await Promise.all([
     wallets.length ? getRecentFills(wallets, catalog.coinNames) : Promise.resolve({ tracked: [], fills: [] }),
     wallets.length ? getCoinFlow(wallets, catalog.coinNames) : Promise.resolve([]),
-    getMarketMovers().catch(() => ({ gainers: [], losers: [], partial: true })),
+    getMarketMovers().catch(() => ({ gainers: [], losers: [], partial: true, positionCoverage: 0 })),
   ]);
   if (movers.partial) warnings.push("Часть данных Binance и Bybit временно недоступна");
-  if (!movers.gainers.length && !movers.losers.length) warnings.push("Нет свежих снимков позиций для сопоставления с движением рынка");
+  if (!movers.positionCoverage) warnings.push("Нет свежих снимков позиций для сопоставления с движением рынка");
   return {
     wallets, fills: pulse.fills, tracked: pulse.tracked,
     prices: Object.fromEntries(["BTC", "ETH", "SOL", "HYPE", "XRP", "DOGE"].map((coin) => [coin, Number(mids[coin] ?? 0)])),
