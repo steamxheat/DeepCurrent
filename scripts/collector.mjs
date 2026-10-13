@@ -29,7 +29,8 @@ const mode = process.env.DC_JOURNAL_MODE === "live" ? "live" : "shadow";
 const token = process.env.TELEGRAM_BOT_TOKEN; const appUrl = process.env.APP_URL;
 let running = true; let socket; let offset = 0; let lastReceive = 0; let diskCheckedAt = 0; let freeBytes = 0; let disconnectedAt = 0;
 let subscriptionLimited = false;
-let userFillsOnly = false;
+// Exact fills take priority; optional user feeds compete for the source's actual user-channel cap.
+const userFillsOnly = true;
 let dexNames = [""]; let markets = []; let excludedMarkets = []; let coinNames = {}; let mids = {}; let midsAt = 0;
 const targets = new Map(); const subscribedUsers = new Set(); const ack = new Set(); const recoverQueue = new Set();
 const subscribedAt = new Map(); const lastTrade = new Map();
@@ -140,7 +141,7 @@ function selectUsers() {
   const selected = selectStreamWallets({ active: journal.activeWallets().filter(validWalletAddress), favorites: [...watchedWallets].filter(validWalletAddress),
     ranked: [...targets.keys()], subscribedAt, lastTrade, now: Date.now() });
   for (const wallet of subscribedUsers) if (!selected.includes(wallet)) {
-    for (const type of ["userFills", "allDexsClearinghouseState", "userFundings"]) subscribe({ type, user: wallet, ...(type === "userFills" ? { aggregateByTime: false } : {}) }, "unsubscribe");
+    for (const subscription of [...subscriptions.values()]) if (subscription.user === wallet) subscribe(subscription, "unsubscribe");
     subscribedUsers.delete(wallet); subscribedAt.delete(wallet);
   }
   for (const wallet of selected) if (!subscribedUsers.has(wallet)) {
@@ -179,11 +180,6 @@ function handle(message) {
     if (/more than 1000 channels/i.test(String(message.data))) {
       if (!subscriptionLimited) console.error("Subscription capacity reached; public market coverage is incomplete. Check other consumers on this IP.");
       subscriptionLimited = true;
-    } else if (/more than \d+ (?:total |unique )?users/i.test(String(message.data)) && !userFillsOnly) {
-      // Keep exact executions first; scoped state and funding still have REST recovery paths.
-      userFillsOnly = true;
-      for (const subscription of subscriptions.values()) if (subscription.user && subscription.type !== "userFills") subscribe(subscription, "unsubscribe");
-      console.error("User subscription capacity reached; retaining fills only, state/funding use REST.");
     } else console.error("Subscription error:", message.data);
     return;
   }
@@ -273,7 +269,8 @@ async function snapshotWallet(wallet, priority) {
   await Promise.all(scopes.map(async (scope) => {
     const requestedAt = Date.now();
     try {
-      const payload = await post(scope === "spot" ? { type: "spotClearinghouseState", user: wallet } : { type: "clearinghouseState", user: wallet, ...(scope ? { dex: scope } : {}) }, priority);
+      // Cheap foreground state must not starve behind continuous fill confirmations.
+      const payload = await post(scope === "spot" ? { type: "spotClearinghouseState", user: wallet } : { type: "clearinghouseState", user: wallet, ...(scope ? { dex: scope } : {}) }, priority <= 1 ? -1 : priority);
       if (scope !== "spot" && !Array.isArray(payload.assetPositions)) throw new Error("Invalid scoped position response");
       journal.recordScope({ wallet, scope, requestedAt, receivedAt: Date.now(), payload });
     } catch (error) { health.event("snapshot_failed", { wallet, scope, durationMs: Date.now() - requestedAt, error: diagnosticError(error) }); journal.recordScope({ wallet, scope, requestedAt, receivedAt: Date.now(), error: error.message }); }

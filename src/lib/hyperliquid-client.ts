@@ -13,7 +13,7 @@ export function createInfoClient(fetcher: typeof fetch = fetch, observe?: (detai
     // shortcut: sustained urgent traffic can delay backfill; never advertise complete history while recovery is pending.
     if (queue.length && now < cooldownUntil) { timer = setTimeout(pump, cooldownUntil - now); return; }
     // Keep one HTTP slot available for new fill confirmations rather than backfill.
-    while (queue.length && active < (queue[0].priority === 0 ? 4 : 3) && tokens >= required(queue[0])) {
+    while (queue.length && active < (queue[0].priority <= 0 ? 4 : 3) && tokens >= required(queue[0])) {
       const task = queue.shift()!; tokens -= task.weight; active++;
       task.run().then(task.resolve, task.reject).finally(() => { active--; pump(); });
     }

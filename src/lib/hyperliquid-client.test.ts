@@ -24,6 +24,18 @@ test("large backfills reserve response weight without consuming the urgent allow
   await Promise.all([bulk, urgent]); assert.ok(client.budget().tokens >= 110);
 });
 
+test("cheap foreground state cannot starve behind a continuous confirmation queue", async (context) => {
+  context.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  const types: string[] = [];
+  const client = createInfoClient(async (_url, options) => { types.push(JSON.parse(String(options?.body)).type); return Response.json([]); });
+  for (let index = 0; index < 7; index++) await client.post({ type: "userFillsByTime" }, 0);
+  const waiting = client.post({ type: "userFillsByTime" }, 0);
+  assert.equal(client.pending(), 1);
+  await client.post({ type: "clearinghouseState" }, -1);
+  assert.equal(types.at(-1), "clearinghouseState"); assert.equal(client.pending(), 1);
+  context.mock.timers.tick(2000); await waiting;
+});
+
 test("429 releases workers and applies one shared cooldown before retry", async (context) => {
   context.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
   const calls: number[] = [];
