@@ -37,6 +37,13 @@ export function mergeFills(...groups: Fill[][]) {
     .sort((a, b) => b.time - a.time).slice(0, 10_000);
 }
 
+export function mergeFillHistoryPage(current: Fill[], page: Fill[]) {
+  const previousOldest = current.length ? Math.min(...current.map((fill) => fill.time)) : Infinity;
+  const fills = mergeFills(current, page);
+  const oldest = fills.length ? Math.min(...fills.map((fill) => fill.time)) : Infinity;
+  return { fills, complete: page.length < 2_000, progressed: oldest < previousOldest, oldest };
+}
+
 export function netClosedPnl(fill: Pick<Fill, "closedPnl" | "fee">) {
   return Number(fill.closedPnl || 0) + Number(fill.fee || 0);
 }

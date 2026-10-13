@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { closedTrades, computeFillStats, findConfluences, mergeFills, positionOpenedAt, type Fill } from "./stats.ts";
+import { closedTrades, computeFillStats, findConfluences, mergeFillHistoryPage, mergeFills, positionOpenedAt, type Fill } from "./stats.ts";
 
 const fill = (overrides: Partial<Fill>): Fill => ({
   coin: "BTC", px: "100", sz: "1", side: "B", time: 1_000, dir: "Open Long",
@@ -14,6 +14,16 @@ test("fill stats use only closed trades and include signed fees", () => {
     fill({ closedPnl: "0", fee: "-1" }),
   ]);
   assert.deepEqual(result, { closed: 2, wins: 1, winRate: 50, profitFactor: 2, netPnl: 5 });
+});
+
+test("fill history pagination moves backward and detects its final page", () => {
+  const current = Array.from({ length: 2_000 }, (_, index) => fill({ time: 4_000 + index, tid: index }));
+  const older = Array.from({ length: 2_000 }, (_, index) => fill({ time: 2_000 + index, tid: 2_000 + index }));
+  const progress = mergeFillHistoryPage(current, older);
+  assert.equal(progress.progressed, true);
+  assert.equal(progress.complete, false);
+  assert.equal(progress.oldest, 2_000);
+  assert.equal(mergeFillHistoryPage(progress.fills, [fill({ time: 1_999, tid: 9_999 })]).complete, true);
 });
 
 test("confluence requires two unique wallets in the same market and direction", () => {

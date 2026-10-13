@@ -162,12 +162,13 @@ export function copySamplesForWallet(wallet: string): CopySample[] {
     .map((row) => ({ delay: row.delay_seconds, adverseBps: row.adverse_bps }));
 }
 
-export function latestCoinSnapshots(coin: string, limit = 500): PositionSnapshot[] {
+export function latestCoinSnapshots(coin: string, limit = 500, since = Date.now() - 15 * 60_000): PositionSnapshot[] {
   return db.prepare(`SELECT p.wallet, p.coin, p.captured_at AS capturedAt, p.size, p.entry_px AS entryPx,
     p.position_value AS positionValue, p.unrealized_pnl AS unrealizedPnl, p.leverage, p.liquidation_px AS liquidationPx,
     p.margin_used AS marginUsed, p.source FROM position_snapshots p JOIN (
       SELECT wallet, coin, MAX(captured_at) AS captured_at FROM position_snapshots WHERE coin = ? GROUP BY wallet, coin
-    ) latest ON latest.wallet = p.wallet AND latest.coin = p.coin AND latest.captured_at = p.captured_at LIMIT ?`).all(coin, limit) as unknown as PositionSnapshot[];
+    ) latest ON latest.wallet = p.wallet AND latest.coin = p.coin AND latest.captured_at = p.captured_at
+    WHERE p.captured_at >= ? LIMIT ?`).all(coin, since, limit) as unknown as PositionSnapshot[];
 }
 
 const mapScreening = (row: ScreeningRow): WalletScreening => ({

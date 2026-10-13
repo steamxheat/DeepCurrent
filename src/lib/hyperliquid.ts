@@ -1,11 +1,11 @@
 import "server-only";
-import { closedTrades, mergeFills, positionOpenedAt, type ClosedTrade, type Fill } from "./stats";
+import { closedTrades, mergeFillHistoryPage, mergeFills, positionOpenedAt, type ClosedTrade, type Fill } from "./stats";
 import { normalizePerpPortfolio, type PortfolioRange, type PortfolioSeries, type RawPortfolioEntry } from "./portfolio";
 import { getAdminConfig, type AdminConfig } from "./admin-store";
 import { hasPositiveMonthPnl, walletQuality } from "./wallet-quality";
 import { displayCoin, spotCoinNames, type SpotMeta } from "./live";
 import { copyabilityScore, type CopyabilityAnalysis } from "./copyability";
-import { coinFlowChange } from "./coin-intelligence";
+import { coinFlowChange, coinParticipants, type CoinParticipant } from "./coin-intelligence";
 import { fetchWithRetry } from "./fetch-retry";
 import {
   coinJournal, copySamplesForWallet, latestCoinSnapshots, recordCompletedTrades, recordFundingEvents, recordOrderEvents,
@@ -18,7 +18,7 @@ const INFO_URL = "https://api.hyperliquid.xyz/info";
 const LEADERBOARD_URL = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard";
 let leaderboardCache: { expires: number; rows: WalletRow[]; sourceCount: number } | undefined;
 let marketMoversCache: { expires: number; value: { gainers: MarketMover[]; losers: MarketMover[]; partial: boolean } } | undefined;
-type WalletFillCache = { fills: Fill[]; recentStart: number; backfillStart: number; complete: boolean; usedAt: number };
+type WalletFillCache = { fills: Fill[]; complete: boolean; usedAt: number };
 const walletFillCache = new Map<string, WalletFillCache>();
 const infoFallbackCache = new Map<string, { value: unknown; storedAt: number }>();
 let infoFallbackHits = 0;
@@ -75,6 +75,7 @@ export type CoinDetail = {
   coin: string; markPx: number; oraclePx: number; change24h: number; volume24h: number; openInterest: number; funding: number;
   candles: Array<{ time: number; open: number; close: number; high: number; low: number; volume: number }>;
   events: JournalEvent[]; snapshots: ReturnType<typeof latestCoinSnapshots>;
+  participants: CoinParticipant[]; hasPerpMarket: boolean;
   changes: Record<"5m" | "1h" | "4h" | "24h", { long: number; short: number; net: number; wallets: number }>;
   updatedAt: number; source: string;
 };
@@ -104,31 +105,30 @@ async function getWalletFills(address: string) {
   const key = address.toLowerCase();
   const cached = walletFillCache.get(key);
   if (!cached) {
-    const fills = await info<Fill[]>({ type: "userFills", user: address, aggregateByTime: true }, 2);
-    const recentStart = fills.length ? Math.min(...fills.map((fill) => fill.time)) : 0;
-    const entry = { fills, recentStart, backfillStart: 0, complete: fills.length < 2_000, usedAt: Date.now() };
+    let fills = await info<Fill[]>({ type: "userFills", user: address, aggregateByTime: true }, 2);
+    let complete = fills.length < 2_000;
+    for (let page = 1; page < 5 && !complete && fills.length < 10_000; page++) {
+      const oldest = Math.min(...fills.map((fill) => fill.time));
+      const older = await info<Fill[]>({ type: "userFillsByTime", user: address, startTime: 0, endTime: oldest - 1, aggregateByTime: true }, 2).catch(() => null);
+      if (!older) break;
+      const progress = mergeFillHistoryPage(fills, older); fills = progress.fills; complete = progress.complete;
+      if (!progress.progressed) break;
+    }
+    const entry = { fills, complete, usedAt: Date.now() };
     walletFillCache.set(key, entry);
     return { fills, analysisFills: fills, complete: entry.complete };
   }
 
   const latestTime = cached.fills[0]?.time ?? 0;
-  const latestPromise = info<Fill[]>({ type: "userFillsByTime", user: address, startTime: latestTime, aggregateByTime: true }, 2);
-  const backfillPromise = cached.complete
-    ? Promise.resolve<Fill[]>([])
-    : info<Fill[]>({ type: "userFillsByTime", user: address, startTime: cached.backfillStart, aggregateByTime: true }, 2);
-  const [latestResult, backfillResult] = await Promise.allSettled([latestPromise, backfillPromise]);
-  const latest = latestResult.status === "fulfilled" ? latestResult.value : [];
-  const backfill = backfillResult.status === "fulfilled" ? backfillResult.value : [];
-  const fills = mergeFills(cached.fills, latest, backfill);
-  const nextStart = backfill.length ? Math.max(...backfill.map((fill) => fill.time)) : cached.backfillStart;
-  const complete = cached.complete || (backfillResult.status === "fulfilled" && (backfill.length < 2_000 || nextStart >= cached.recentStart));
-  const entry = { ...cached, fills, backfillStart: nextStart, complete, usedAt: Date.now() };
+  const latest = await info<Fill[]>({ type: "userFillsByTime", user: address, startTime: latestTime, aggregateByTime: true }, 2).catch(() => []);
+  const fills = mergeFills(cached.fills, latest);
+  const entry = { ...cached, fills, usedAt: Date.now() };
   walletFillCache.set(key, entry);
   if (walletFillCache.size > 100) {
     const oldest = [...walletFillCache].sort((a, b) => a[1].usedAt - b[1].usedAt)[0]?.[0];
     if (oldest) walletFillCache.delete(oldest);
   }
-  return { fills, analysisFills: complete ? fills : fills.filter((fill) => fill.time >= cached.recentStart), complete };
+  return { fills, analysisFills: fills, complete: entry.complete };
 }
 
 function performance(row: RawLeaderboardRow, name: WindowName) {
@@ -386,21 +386,28 @@ export async function getWalletDetail(address: string): Promise<WalletDetail> {
 }
 
 export async function getCoinDetail(coin: string): Promise<CoinDetail> {
-  const safeCoin = decodeURIComponent(coin); const dex = safeCoin.includes(":") ? safeCoin.split(":", 1)[0] : "";
-  const rawCoin = dex ? safeCoin.slice(dex.length + 1) : safeCoin;
+  const safeCoin = decodeURIComponent(coin); const rawCoin = safeCoin.includes(":") ? safeCoin.slice(safeCoin.indexOf(":") + 1) : safeCoin;
   const endTime = Date.now(); const startTime = endTime - 7 * 86_400_000;
-  const [context, candles] = await Promise.all([
-    info<[RawMeta, RawAssetContext[]]>({ type: "metaAndAssetCtxs", ...(dex ? { dex } : {}) }, 15),
-    info<RawCandle[]>({ type: "candleSnapshot", req: { coin: safeCoin, interval: "15m", startTime, endTime } }, 15).catch(() => []),
-  ]);
-  const index = (context[0].universe ?? []).findIndex((asset) => asset.name === safeCoin || asset.name === rawCoin);
-  if (index < 0) throw new Error(`Рынок ${safeCoin} не найден`);
-  const market = context[1][index] ?? {}; const markPx = Number(market.markPx ?? 0); const previous = Number(market.prevDayPx ?? markPx);
-  const events = coinJournal(safeCoin, endTime - 86_400_000); const snapshots = latestCoinSnapshots(safeCoin);
+  const dexes = await info<RawPerpDex[]>({ type: "perpDexs" }, 300).catch(() => []);
+  const names = ["", ...dexes.flatMap((row) => row?.name ? [row.name] : [])];
+  const contexts = await Promise.allSettled(names.map((dex) => info<[RawMeta, RawAssetContext[]]>({ type: "metaAndAssetCtxs", ...(dex ? { dex } : {}) }, 15)));
+  const found = contexts.flatMap((result, dexIndex) => result.status === "fulfilled" ? (result.value[0].universe ?? []).flatMap((asset, index) => {
+    const name = asset.name ?? ""; return name === safeCoin || name === rawCoin || name.split(":").at(-1) === rawCoin ? [{ name, dex: names[dexIndex], market: result.value[1][index] ?? {} }] : [];
+  }) : [])[0];
+  const movers = found ? null : await getMarketMovers().catch(() => null);
+  const spot = [...(movers?.gainers ?? []), ...(movers?.losers ?? [])].find((row) => row.symbol === rawCoin);
+  const resolvedCoin = found?.name ?? safeCoin;
+  const candles = found ? await info<RawCandle[]>({ type: "candleSnapshot", req: { coin: resolvedCoin, interval: "15m", startTime, endTime } }, 15).catch(() => []) : [];
+  const market = found?.market ?? {}; const markPx = Number(market.markPx ?? spot?.price ?? 0); const previous = Number(market.prevDayPx ?? (spot?.change ? markPx / (1 + spot.change / 100) : markPx));
+  const aliases = [...new Set([safeCoin, rawCoin, resolvedCoin])];
+  const events = [...new Map(aliases.flatMap((name) => coinJournal(name, endTime - 86_400_000)).map((event) => [event.eventKey, event])).values()].sort((left, right) => right.time - left.time);
+  const snapshots = aliases.flatMap((name) => latestCoinSnapshots(name));
+  const participants = coinParticipants(events, snapshots, endTime);
   const windows = { "5m": 300_000, "1h": 3_600_000, "4h": 14_400_000, "24h": 86_400_000 } as const;
   const changes = Object.fromEntries(Object.entries(windows).map(([label, duration]) => [label, coinFlowChange(events, endTime, duration)])) as CoinDetail["changes"];
-  return { coin: safeCoin, markPx, oraclePx: Number(market.oraclePx ?? 0), change24h: previous ? (markPx - previous) / previous * 100 : 0,
-    volume24h: Number(market.dayNtlVlm ?? 0), openInterest: Number(market.openInterest ?? 0), funding: Number(market.funding ?? 0),
+  return { coin: rawCoin, markPx, oraclePx: Number(market.oraclePx ?? 0), change24h: spot?.change ?? (previous ? (markPx - previous) / previous * 100 : 0),
+    volume24h: Number(market.dayNtlVlm ?? spot?.volume ?? 0), openInterest: Number(market.openInterest ?? 0), funding: Number(market.funding ?? 0),
     candles: candles.map((row) => ({ time: row.t, open: Number(row.o), close: Number(row.c), high: Number(row.h), low: Number(row.l), volume: Number(row.v) })),
-    events, snapshots, changes, updatedAt: endTime, source: "Hyperliquid public API + Deep Current journal" };
+    events, snapshots, participants, hasPerpMarket: Boolean(found), changes, updatedAt: endTime,
+    source: found ? `Hyperliquid ${found.dex || "main"} + Deep Current journal` : `${spot?.exchange ?? "Spot"} market + Deep Current journal` };
 }

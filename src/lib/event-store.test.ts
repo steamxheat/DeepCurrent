@@ -25,6 +25,8 @@ test("event journal deduplicates fills and preserves provenance", async () => {
   const snapshot = { wallet: "0xABC", coin: "BTC", capturedAt: 200, size: 2, entryPx: 90, positionValue: 180, unrealizedPnl: 0, leverage: 5, liquidationPx: null, marginUsed: 36, source: "state" };
   store.recordPositionSnapshots([snapshot]); store.recordPositionSnapshots([{ ...snapshot, capturedAt: 300, leverage: 10 }]);
   assert.equal(store.walletJournal("0xabc").some((row: { action: string; beforeSize?: number; afterSize?: number }) => row.action === "LEVERAGE" && row.beforeSize === 5 && row.afterSize === 10), true);
+  assert.equal(store.latestCoinSnapshots("BTC", 500, 250)[0].capturedAt, 300);
+  assert.equal(store.latestCoinSnapshots("BTC", 500, 301).length, 0);
   store.recordWalletScreening({ address: "0xABC", platform: "hyperliquid", windowDays: 60, trades: 20, wins: 17, winRate: 85, netPnl: 1_000, volume: 50_000, lastActive: 300, score: 120, historyComplete: true, qualifies: true, reason: "qualified", screenedAt: 400 });
   assert.equal(store.walletScreenings(true, 1_000, 0)[0].address, "0xabc");
   assert.equal(store.screenedWalletAddresses(0).has("0xabc"), true);

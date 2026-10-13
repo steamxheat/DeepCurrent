@@ -157,6 +157,24 @@ async function refreshTargets(reseed = false) {
   try { await task; } finally { if (refreshTask === task) refreshTask = undefined; }
 }
 
+async function syncPositionCoverage() {
+  let cursor = 0;
+  while (running) {
+    const wallets = [...targetWallets]; const wallet = wallets[cursor++ % Math.max(1, wallets.length)];
+    if (!wallet) { await sleep(2_000); continue; }
+    try {
+      const state = await post({ type: "clearinghouseState", user: wallet }); const capturedAt = Date.now();
+      recordPositionSnapshots((state.assetPositions ?? []).map(({ position }) => ({
+        wallet, coin: position.coin, capturedAt, size: Number(position.szi), entryPx: Number(position.entryPx ?? 0),
+        positionValue: Number(position.positionValue ?? 0), unrealizedPnl: Number(position.unrealizedPnl ?? 0),
+        leverage: Number(position.leverage?.value ?? 1), liquidationPx: position.liquidationPx ? Number(position.liquidationPx) : null,
+        marginUsed: Math.abs(Number(position.positionValue ?? 0)) / Math.max(1, Number(position.leverage?.value ?? 1)), source: "Hyperliquid clearinghouseState",
+      })));
+    } catch (error) { console.error(`Coverage ${short(wallet)}:`, error.message); }
+    await sleep(250);
+  }
+}
+
 async function syncExactHistory() {
   const wallets = [...exactWallets].slice(0, 25);
   for (const wallet of wallets) {
@@ -278,6 +296,7 @@ await refreshTargets();
 setInterval(() => refreshTargets().catch(console.error), 180_000);
 setInterval(() => syncExactHistory().catch(console.error), 60_000);
 syncExactHistory().catch(console.error);
+syncPositionCoverage().catch(console.error);
 setInterval(() => socket?.readyState === WebSocket.OPEN && socket.send(JSON.stringify({ method: "ping" })), 45_000);
 process.on("SIGINT", () => { running = false; socket?.close(); process.exit(0); });
 console.log("Deep Current collector started");
