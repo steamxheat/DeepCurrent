@@ -10,14 +10,16 @@ import { hasPositiveMonthPnl } from "../src/lib/wallet-quality.ts";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const appUrl = process.env.APP_URL;
-if (!token) throw new Error("Set TELEGRAM_BOT_TOKEN in the collector process environment");
 
-const api = `https://api.telegram.org/bot${token}`;
+const api = token ? `https://api.telegram.org/bot${token}` : "";
 const aggregateDelay = 1_500;
 const confluenceWindow = Math.max(60_000, Number(process.env.CONFLUENCE_WINDOW_MS) || 15 * 60_000);
 const indexedWalletLimit = Math.min(1_000, Math.max(10, Number(process.env.TRACKED_WALLETS) || 1_000));
 const positions = new Map();
 const readyWallets = new Set();
+const mainReadyWallets = new Set();
+const mainMarkets = new Set();
+const latestWalletTrade = new Map();
 const targetWallets = new Set();
 const exactWallets = new Set();
 const walletNames = new Map();
@@ -47,6 +49,7 @@ async function post(body) {
 }
 
 async function telegram(method, body) {
+  if (!token) throw new Error("Telegram bot is disabled: TELEGRAM_BOT_TOKEN is not set");
   const response = await fetch(`${api}/${method}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   const result = await response.json();
   if (!result.ok) throw new Error(`Telegram ${method}: ${result.description}`);
@@ -105,6 +108,8 @@ async function marketCatalog() {
   const [dexes, spot] = await Promise.all([post({ type: "perpDexs" }).catch(() => []), post({ type: "spotMeta" }).catch(() => ({ universe: [], tokens: [] }))]);
   perpDexNames = ["", ...dexes.flatMap((dex) => dex?.name ? [dex.name] : [])];
   const metas = await Promise.allSettled(perpDexNames.map((dex) => post({ type: "meta", ...(dex ? { dex } : {}) })));
+  mainMarkets.clear();
+  if (metas[0]?.status === "fulfilled") for (const asset of metas[0].value.universe ?? []) if (asset.name) mainMarkets.add(asset.name);
   const markets = metas.flatMap((result) => result.status === "fulfilled" ? (result.value.universe ?? []).map((asset) => asset.name) : []).filter(Boolean);
   const tokens = new Map((spot.tokens ?? []).map((item) => [item.index, item.name ?? `Token ${item.index}`]));
   coinNames = Object.fromEntries((spot.universe ?? []).map((pair) => [`@${pair.index}`, `${tokens.get(pair.tokens?.[0]) ?? `Token ${pair.tokens?.[0]}`}/${tokens.get(pair.tokens?.[1]) ?? `Token ${pair.tokens?.[1]}`}`]));
@@ -144,6 +149,7 @@ async function refreshTargets(reseed = false) {
     const next = new Set(wallets); const exact = new Set([...favorites, ...curated.slice(0, 10).map((row) => row.address)]);
     for (const wallet of targetWallets) if (!next.has(wallet)) {
       readyWallets.delete(wallet);
+      mainReadyWallets.delete(wallet);
       for (const key of [...positions.keys()]) if (key.startsWith(`${wallet}:`)) positions.delete(key);
     }
     targetWallets.clear(); wallets.forEach((wallet) => targetWallets.add(wallet)); exactWallets.clear(); exact.forEach((wallet) => exactWallets.add(wallet));
@@ -163,13 +169,27 @@ async function syncPositionCoverage() {
     const wallets = [...targetWallets]; const wallet = wallets[cursor++ % Math.max(1, wallets.length)];
     if (!wallet) { await sleep(2_000); continue; }
     try {
-      const state = await post({ type: "clearinghouseState", user: wallet }); const capturedAt = Date.now();
-      recordPositionSnapshots((state.assetPositions ?? []).map(({ position }) => ({
+      const requestedAt = Date.now(); const state = await post({ type: "clearinghouseState", user: wallet }); const capturedAt = Date.now();
+      const snapshots = (state.assetPositions ?? []).map(({ position }) => ({
         wallet, coin: position.coin, capturedAt, size: Number(position.szi), entryPx: Number(position.entryPx ?? 0),
         positionValue: Number(position.positionValue ?? 0), unrealizedPnl: Number(position.unrealizedPnl ?? 0),
         leverage: Number(position.leverage?.value ?? 1), liquidationPx: position.liquidationPx ? Number(position.liquidationPx) : null,
         marginUsed: Math.abs(Number(position.positionValue ?? 0)) / Math.max(1, Number(position.leverage?.value ?? 1)), source: "Hyperliquid clearinghouseState",
-      })));
+      }));
+      recordPositionSnapshots(snapshots);
+      if ((latestWalletTrade.get(wallet) ?? 0) <= requestedAt) {
+        const stored = new Map(getStoredPositions(wallet).filter((row) => mainMarkets.has(row.coin)).map((row) => [row.coin, row]));
+        const current = new Set(snapshots.map((row) => row.coin));
+        for (const row of stored.values()) if (!current.has(row.coin)) {
+          positions.delete(positionKey(wallet, row.coin)); setStoredPosition(wallet, row.coin, 0, null, capturedAt);
+        }
+        for (const row of snapshots) {
+          const previous = stored.get(row.coin); const openedAt = previous && Math.sign(previous.size) === Math.sign(row.size) ? previous.openedAt : null;
+          positions.set(positionKey(wallet, row.coin), { size: row.size, openedAt });
+          setStoredPosition(wallet, row.coin, row.size, openedAt, capturedAt);
+        }
+        mainReadyWallets.add(wallet);
+      }
     } catch (error) { console.error(`Coverage ${short(wallet)}:`, error.message); }
     await sleep(250);
   }
@@ -232,6 +252,7 @@ async function flushGroup(key) {
   const exactTime = new Intl.DateTimeFormat("ru-RU", { timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3 }).format(event.time);
   const duration = event.action === "CLOSE" && group.openedAt ? `\nВ позиции: ${Math.max(1, Math.round((event.time - group.openedAt) / 60_000))} мин.` : "";
   const text = `<b>${escapeHtml(event.coin)} · ${labels[event.action]} ${event.direction}</b>\nКошелёк: <code>${escapeHtml(short(event.wallet))}</code>\nЦена: <b>${money(event.price)}</b>\nИсполнено: ${event.size.toLocaleString("en-US")} · ${money(event.notional)}\nПозиция после: ${Math.abs(event.after).toLocaleString("en-US")} ${event.direction}${duration}\nТочное время: <code>${exactTime} MSK</code>${matches > 1 ? `\nСовпадение: <b>${matches} кошелька</b>` : ""}`;
+  if (!token) return;
   for (const subscriber of getSubscribersForWallet(event.wallet)) {
     if (!shouldNotify(subscriber.settings, event, matches)) continue;
     await send(subscriber.chatId, text, event.wallet).catch((error) => console.error(`Send ${subscriber.userId}:`, error.message));
@@ -240,6 +261,7 @@ async function flushGroup(key) {
 
 function recordTrade(trade, wallet, side) {
   if (trade.time < streamStartedAt - 2_000 || !markFillProcessed(wallet, trade.hash ?? "", trade.tid ?? `${trade.coin}:${trade.time}:${side}`, trade.time)) return;
+  latestWalletTrade.set(wallet, trade.time);
   if (trade.coin.startsWith("@")) {
     recordWalletEvent({ eventKey: `${wallet}:${trade.hash ?? trade.time}:${trade.tid ?? `${trade.coin}:${side}`}`, wallet, walletName: walletNames.get(wallet),
       coin: displayCoin(trade.coin), action: side, direction: side === "BUY" ? "LONG" : "SHORT", time: trade.time,
@@ -247,7 +269,7 @@ function recordTrade(trade, wallet, side) {
       source: "Hyperliquid market WebSocket", precision: "observed", hash: trade.hash, tid: trade.tid });
     return;
   }
-  if (!readyWallets.has(wallet)) {
+  if (!readyWallets.has(wallet) && !(mainReadyWallets.has(wallet) && mainMarkets.has(trade.coin))) {
     recordWalletEvent({ eventKey: `${wallet}:${trade.hash ?? trade.time}:${trade.tid ?? `${trade.coin}:${side}`}`, wallet, walletName: walletNames.get(wallet),
       coin: displayCoin(trade.coin), action: side, direction: side === "BUY" ? "LONG" : "SHORT", time: trade.time,
       price: Number(trade.px), size: Number(trade.sz), notional: Math.abs(Number(trade.px) * Number(trade.sz)),
@@ -286,7 +308,7 @@ async function connectMarkets() {
   socket.onerror = () => socket.close();
 }
 
-await telegram("setMyCommands", { commands: [
+if (token) await telegram("setMyCommands", { commands: [
   { command: "start", description: "Подключить Deep Current" }, { command: "top", description: "Лидеры дня" },
   { command: "watch", description: "Включить уведомления" }, { command: "stop", description: "Отключить уведомления" },
   { command: "settings", description: "Настройки уведомлений" },
@@ -300,5 +322,7 @@ syncPositionCoverage().catch(console.error);
 setInterval(() => socket?.readyState === WebSocket.OPEN && socket.send(JSON.stringify({ method: "ping" })), 45_000);
 process.on("SIGINT", () => { running = false; socket?.close(); process.exit(0); });
 console.log("Deep Current collector started");
+if (!token) console.log("Telegram disabled; market and position collection remains active");
 connectMarkets().catch(console.error);
-await pollTelegram();
+if (token) await pollTelegram();
+else await new Promise(() => {});

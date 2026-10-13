@@ -23,7 +23,7 @@ npm install
 npm run dev
 ```
 
-Для бота скопируй `.env.example` в `.env.local`, задай новый токен, Telegram ID первоначальных администраторов через запятую и публичный HTTPS URL. Node не загружает `.env.local` сам, поэтому запусти так:
+Для Telegram-бота скопируй `.env.example` в `.env.local`, задай новый токен, Telegram ID первоначальных администраторов через запятую и публичный HTTPS URL. Сам collector собирает рыночные события и позиции даже без Telegram-токена; без токена отключены только бот, уведомления и Telegram-авторизация админов. Node не загружает `.env.local` сам, поэтому запусти так:
 
 ```bash
 set -a && source .env.local && set +a && npm run collector

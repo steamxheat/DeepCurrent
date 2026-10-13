@@ -6,6 +6,12 @@ export type CoinParticipant = {
   events: number; kind: "position" | "activity"; unrealizedPnl?: number;
 };
 
+export function baseMarketSymbol(coin: string) {
+  const raw = coin.includes(":") ? coin.slice(coin.lastIndexOf(":") + 1) : coin;
+  const base = raw.split("/", 1)[0].toUpperCase();
+  return raw.includes("/") && ["UBTC", "UETH", "USOL"].includes(base) ? base.slice(1) : base;
+}
+
 export function coinFlowChange(events: JournalEvent[], now: number, duration: number): FlowChange {
   let long = 0; let short = 0; const wallets = new Set<string>();
   for (const event of events) {

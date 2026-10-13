@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { coinFlowChange, coinParticipants } from "./coin-intelligence.ts";
+import { baseMarketSymbol, coinFlowChange, coinParticipants } from "./coin-intelligence.ts";
 import type { JournalEvent, PositionSnapshot } from "./event-store.ts";
 
 const event = (overrides: Partial<JournalEvent>): JournalEvent => ({ eventKey: Math.random().toString(), wallet: "0x1", coin: "BTC", action: "OPEN", direction: "LONG", time: 900, price: 100, notional: 100, source: "test", precision: "exact", ...overrides });
+
+test("market symbols match perp, HIP-3, and HyperCore spot names", () => {
+  assert.equal(baseMarketSymbol("BTC"), "BTC");
+  assert.equal(baseMarketSymbol("xyz:GOOGL"), "GOOGL");
+  assert.equal(baseMarketSymbol("UBTC/USDC"), "BTC");
+  assert.equal(baseMarketSymbol("UNI/USDC"), "UNI");
+});
 
 test("coin flow measures exposure changes rather than counting closes as new positions", () => {
   const result = coinFlowChange([

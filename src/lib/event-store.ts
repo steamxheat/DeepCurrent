@@ -15,6 +15,10 @@ export type PositionSnapshot = {
   wallet: string; coin: string; capturedAt: number; size: number; entryPx: number; positionValue: number;
   unrealizedPnl: number; leverage: number; liquidationPx: number | null; marginUsed: number; source: string;
 };
+export type CoinPositionCoverage = {
+  coin: string; wallets: number; longWallets: number; shortWallets: number;
+  longNotional: number; shortNotional: number; updatedAt: number;
+};
 export type OrderEvent = { eventKey: string; wallet: string; coin: string; side: string; status: string; kind: string; limitPx: number; size: number; time: number; source: string };
 export type FundingEvent = { eventKey: string; wallet: string; coin: string; time: number; amount: number; rate: number; size: number; source: string };
 export type StoredClosedTrade = ClosedTrade & { wallet: string };
@@ -40,6 +44,7 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS wallet_events_wallet_time ON wallet_events(wallet, occurred_at DESC);
   CREATE INDEX IF NOT EXISTS wallet_events_coin_time ON wallet_events(coin, occurred_at DESC);
+  CREATE INDEX IF NOT EXISTS wallet_events_time ON wallet_events(occurred_at DESC);
   CREATE TABLE IF NOT EXISTS position_snapshots (
     wallet TEXT NOT NULL, coin TEXT NOT NULL, captured_at INTEGER NOT NULL, size REAL NOT NULL,
     entry_px REAL NOT NULL, position_value REAL NOT NULL, unrealized_pnl REAL NOT NULL,
@@ -142,6 +147,10 @@ export function coinJournal(coin: string, since = Date.now() - 86_400_000, limit
   return (db.prepare("SELECT * FROM wallet_events WHERE coin = ? AND occurred_at >= ? ORDER BY occurred_at DESC LIMIT ?").all(coin, since, limit) as JournalRow[]).map(mapJournal);
 }
 
+export function recentJournal(since = Date.now() - 86_400_000, limit = 5_000) {
+  return (db.prepare("SELECT * FROM wallet_events WHERE occurred_at >= ? ORDER BY occurred_at DESC LIMIT ?").all(since, limit) as JournalRow[]).map(mapJournal);
+}
+
 export function walletOrders(wallet: string, limit = 500): OrderEvent[] {
   return (db.prepare("SELECT * FROM order_events WHERE wallet = ? ORDER BY occurred_at DESC LIMIT ?").all(wallet.toLowerCase(), limit) as OrderRow[])
     .map((row) => ({ eventKey: row.event_key, wallet: row.wallet, coin: row.coin, side: row.side, status: row.status, kind: row.kind, limitPx: row.limit_px, size: row.size, time: row.occurred_at, source: row.source }));
@@ -169,6 +178,20 @@ export function latestCoinSnapshots(coin: string, limit = 500, since = Date.now(
       SELECT wallet, coin, MAX(captured_at) AS captured_at FROM position_snapshots WHERE coin = ? GROUP BY wallet, coin
     ) latest ON latest.wallet = p.wallet AND latest.coin = p.coin AND latest.captured_at = p.captured_at
     WHERE p.captured_at >= ? LIMIT ?`).all(coin, since, limit) as unknown as PositionSnapshot[];
+}
+
+export function currentPositionCoverage(since = Date.now() - 15 * 60_000): CoinPositionCoverage[] {
+  const rows = db.prepare(`SELECT p.coin, COUNT(DISTINCT p.wallet) AS wallets,
+    COUNT(DISTINCT CASE WHEN p.size > 0 THEN p.wallet END) AS longWallets,
+    COUNT(DISTINCT CASE WHEN p.size < 0 THEN p.wallet END) AS shortWallets,
+    COALESCE(SUM(CASE WHEN p.size > 0 THEN ABS(p.position_value) ELSE 0 END), 0) AS longNotional,
+    COALESCE(SUM(CASE WHEN p.size < 0 THEN ABS(p.position_value) ELSE 0 END), 0) AS shortNotional,
+    MAX(p.captured_at) AS updatedAt
+    FROM position_snapshots p JOIN (
+      SELECT wallet, coin, MAX(captured_at) AS captured_at FROM position_snapshots GROUP BY wallet, coin
+    ) latest ON latest.wallet = p.wallet AND latest.coin = p.coin AND latest.captured_at = p.captured_at
+    WHERE p.captured_at >= ? AND p.size != 0 GROUP BY p.coin`).all(since) as unknown as CoinPositionCoverage[];
+  return rows.map((row) => ({ ...row }));
 }
 
 const mapScreening = (row: ScreeningRow): WalletScreening => ({

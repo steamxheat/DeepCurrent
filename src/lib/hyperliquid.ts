@@ -3,12 +3,12 @@ import { closedTrades, mergeFillHistoryPage, mergeFills, positionOpenedAt, type 
 import { normalizePerpPortfolio, type PortfolioRange, type PortfolioSeries, type RawPortfolioEntry } from "./portfolio";
 import { getAdminConfig, type AdminConfig } from "./admin-store";
 import { hasPositiveMonthPnl, walletQuality } from "./wallet-quality";
-import { displayCoin, spotCoinNames, type SpotMeta } from "./live";
+import { displayCoin, mergePulseFills, spotCoinNames, type SpotMeta } from "./live";
 import { copyabilityScore, type CopyabilityAnalysis } from "./copyability";
-import { coinFlowChange, coinParticipants, type CoinParticipant } from "./coin-intelligence";
+import { baseMarketSymbol, coinFlowChange, coinParticipants, type CoinParticipant } from "./coin-intelligence";
 import { fetchWithRetry } from "./fetch-retry";
 import {
-  coinJournal, copySamplesForWallet, latestCoinSnapshots, recordCompletedTrades, recordFundingEvents, recordOrderEvents,
+  coinJournal, copySamplesForWallet, currentPositionCoverage, latestCoinSnapshots, recentJournal, recordCompletedTrades, recordFundingEvents, recordOrderEvents,
   recordPositionSnapshots, recordWalletEvent, walletCompletedTrades, walletFunding, walletJournal, walletOrders,
   type FundingEvent, type JournalEvent, type OrderEvent,
 } from "./event-store";
@@ -50,7 +50,10 @@ export type WalletRow = {
 };
 export type PulseFill = Fill & { wallet: string; walletName: string; source?: "user" | "market" };
 export type CoinFlow = { coin: string; buys: number; sells: number; realizedPnl: number; trades: number; wallets: number };
-export type MarketMover = { symbol: string; exchange: "Binance" | "Bybit"; price: number; change: number; volume: number };
+export type MarketMover = {
+  symbol: string; exchange: "Binance" | "Bybit"; price: number; change: number; volume: number;
+  wallets: number; longWallets: number; shortWallets: number; longNotional: number; shortNotional: number; positionUpdatedAt: number;
+};
 export type DashboardData = {
   wallets: WalletRow[]; prices: Record<string, number>; fills: PulseFill[];
   tracked: { address: string; name: string }[]; liveCoins: string[]; sourceCount: number;
@@ -193,30 +196,38 @@ async function getRecentFills(wallets: WalletRow[], coinNames: Record<string, st
     const fills = await info<Fill[]>({ type: "userFillsByTime", user: wallet.address, startTime, aggregateByTime: true }, 25);
     return fills.slice(0, 120).map((fill) => ({ ...fill, coin: displayCoin(fill.coin, coinNames), wallet: wallet.address, walletName: wallet.name, source: "user" as const }));
   }));
+  const names = new Map(wallets.map((wallet) => [wallet.address.toLowerCase(), wallet.name]));
+  const journalFills = recentJournal(startTime, 10_000).flatMap((event): PulseFill[] => {
+    const wallet = event.wallet.toLowerCase(); const walletName = names.get(wallet);
+    if (!walletName || !event.price || !event.size) return [];
+    const reducing = ["REDUCE", "CLOSE"].includes(event.action);
+    const side: "A" | "B" = event.action === "BUY" ? "B" : event.action === "SELL" ? "A"
+      : event.direction === "LONG" ? (reducing ? "A" : "B") : (reducing ? "B" : "A");
+    return [{ coin: event.coin, px: String(event.price), sz: String(event.size), side, time: event.time,
+      dir: `${event.action} ${event.direction ?? ""}`.trim(), closedPnl: String(event.realizedPnl ?? 0), fee: String(event.fee ?? 0),
+      hash: event.hash ?? event.eventKey, tid: event.tid, startPosition: event.beforeSize === undefined ? undefined : String(event.beforeSize),
+      wallet, walletName, source: event.precision === "observed" ? "market" : "user" }];
+  });
+  const apiFills = responses.flatMap((result) => result.status === "fulfilled" ? result.value : []);
   return {
     tracked: tracked.map(({ address, name }) => ({ address, name })),
-    fills: responses.flatMap((result) => result.status === "fulfilled" ? result.value : [])
-      .sort((a, b) => b.time - a.time),
+    fills: mergePulseFills(apiFills, journalFills),
   };
 }
 
 async function getCoinFlow(wallets: WalletRow[], coinNames: Record<string, string>) {
-  const tracked = wallets.slice(0, 5);
   const startTime = Date.now() - 24 * 60 * 60 * 1_000;
-  const responses = await Promise.allSettled(tracked.map(async (wallet) => ({
-    wallet: wallet.address,
-    fills: await info<Fill[]>({ type: "userFillsByTime", user: wallet.address, startTime, aggregateByTime: true }, 120),
-  })));
+  const tracked = new Set(wallets.map((wallet) => wallet.address.toLowerCase()));
+  const events = recentJournal(startTime, 100_000).filter((event) => tracked.has(event.wallet));
   const rows = new Map<string, { coin: string; buys: number; sells: number; realizedPnl: number; trades: number; wallets: Set<string> }>();
-  for (const result of responses) {
-    if (result.status !== "fulfilled") continue;
-    for (const fill of result.value.fills) {
-      const coin = displayCoin(fill.coin, coinNames); const notional = Math.abs(Number(fill.px) * Number(fill.sz));
-      const row = rows.get(coin) ?? { coin, buys: 0, sells: 0, realizedPnl: 0, trades: 0, wallets: new Set<string>() };
-      if (fill.side === "B") row.buys += notional; else row.sells += notional;
-      row.realizedPnl += Number(fill.closedPnl || 0) + Number(fill.fee || 0); row.trades += 1; row.wallets.add(result.value.wallet);
-      rows.set(coin, row);
-    }
+  for (const event of events) {
+    const coin = displayCoin(event.coin, coinNames); const notional = Math.abs(event.notional ?? Number(event.price ?? 0) * Number(event.size ?? 0));
+    const row = rows.get(coin) ?? { coin, buys: 0, sells: 0, realizedPnl: 0, trades: 0, wallets: new Set<string>() };
+    const reducing = ["REDUCE", "CLOSE"].includes(event.action);
+    const buy = event.action === "BUY" || (event.action !== "SELL" && (event.direction === "LONG") !== reducing);
+    if (buy) row.buys += notional; else row.sells += notional;
+    row.realizedPnl += Number(event.realizedPnl ?? 0) + Number(event.fee ?? 0); row.trades += 1; row.wallets.add(event.wallet);
+    rows.set(coin, row);
   }
   return [...rows.values()].map((row): CoinFlow => ({ ...row, wallets: row.wallets.size }))
     .sort((a, b) => b.buys + b.sells - a.buys - a.sells).slice(0, 20);
@@ -237,9 +248,25 @@ async function getMarketMovers() {
       return response.json() as Promise<{ result?: { list?: { symbol: string; lastPrice: string; price24hPcnt: string; turnover24h: string }[] } }>;
     }),
   ]);
+  const coverage = new Map<string, Omit<MarketMover, "symbol" | "exchange" | "price" | "change" | "volume">>();
+  for (const row of currentPositionCoverage()) {
+    const symbol = baseMarketSymbol(row.coin); const previous = coverage.get(symbol);
+    coverage.set(symbol, previous ? { wallets: previous.wallets + row.wallets, longWallets: previous.longWallets + row.longWallets,
+      shortWallets: previous.shortWallets + row.shortWallets, longNotional: previous.longNotional + row.longNotional,
+      shortNotional: previous.shortNotional + row.shortNotional, positionUpdatedAt: Math.max(previous.positionUpdatedAt, row.updatedAt) }
+      : { wallets: row.wallets, longWallets: row.longWallets, shortWallets: row.shortWallets, longNotional: row.longNotional,
+        shortNotional: row.shortNotional, positionUpdatedAt: row.updatedAt });
+  }
   const rows: MarketMover[] = [];
-  if (binance.status === "fulfilled") rows.push(...binance.value.filter((item) => validMover(item.symbol, Number(item.quoteVolume))).map((item) => ({ symbol: item.symbol.slice(0, -4), exchange: "Binance" as const, price: Number(item.lastPrice), change: Number(item.priceChangePercent), volume: Number(item.quoteVolume) })));
-  if (bybit.status === "fulfilled") rows.push(...(bybit.value.result?.list ?? []).filter((item) => validMover(item.symbol, Number(item.turnover24h))).map((item) => ({ symbol: item.symbol.slice(0, -4), exchange: "Bybit" as const, price: Number(item.lastPrice), change: Number(item.price24hPcnt) * 100, volume: Number(item.turnover24h) })));
+  const mover = (symbol: string, exchange: "Binance" | "Bybit", price: number, change: number, volume: number) => {
+    const positions = coverage.get(symbol); return positions ? { symbol, exchange, price, change, volume, ...positions } : null;
+  };
+  if (binance.status === "fulfilled") rows.push(...binance.value.filter((item) => validMover(item.symbol, Number(item.quoteVolume))).flatMap((item) => {
+    const row = mover(item.symbol.slice(0, -4), "Binance", Number(item.lastPrice), Number(item.priceChangePercent), Number(item.quoteVolume)); return row ? [row] : [];
+  }));
+  if (bybit.status === "fulfilled") rows.push(...(bybit.value.result?.list ?? []).filter((item) => validMover(item.symbol, Number(item.turnover24h))).flatMap((item) => {
+    const row = mover(item.symbol.slice(0, -4), "Bybit", Number(item.lastPrice), Number(item.price24hPcnt) * 100, Number(item.turnover24h)); return row ? [row] : [];
+  }));
   const deduped = [...rows.reduce((map, row) => {
     const current = map.get(row.symbol); if (!current || row.volume > current.volume) map.set(row.symbol, row); return map;
   }, new Map<string, MarketMover>()).values()];
@@ -270,6 +297,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     getMarketMovers().catch(() => ({ gainers: [], losers: [], partial: true })),
   ]);
   if (movers.partial) warnings.push("Часть данных Binance и Bybit временно недоступна");
+  if (!movers.gainers.length && !movers.losers.length) warnings.push("Нет свежих снимков позиций для сопоставления с движением рынка");
   return {
     wallets, fills: pulse.fills, tracked: pulse.tracked,
     prices: Object.fromEntries(["BTC", "ETH", "SOL", "HYPE", "XRP", "DOGE"].map((coin) => [coin, Number(mids[coin] ?? 0)])),
@@ -293,7 +321,7 @@ const eventKey = (wallet: string, fill: Fill) => `${wallet.toLowerCase()}:${fill
 export async function getWalletDetail(address: string): Promise<WalletDetail> {
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error("Некорректный адрес кошелька");
   const now = Date.now(); const fallbackStart = infoFallbackHits;
-  const [history, portfolio, spotMeta, spotState, rawOrders, rawFunding, rawLedger] = await Promise.all([
+  const [history, portfolio, spotMeta, spotState, rawOrders, rawFunding, rawLedger, perpDexes] = await Promise.all([
     getWalletFills(address),
     info<RawPortfolioEntry[]>({ type: "portfolio", user: address }, 30).catch(() => []),
     info<SpotMeta>({ type: "spotMeta" }, 3_600).catch(() => ({ universe: [], tokens: [] })),
@@ -301,10 +329,10 @@ export async function getWalletDetail(address: string): Promise<WalletDetail> {
     info<RawOrder[]>({ type: "historicalOrders", user: address }, 30).catch(() => []),
     info<RawFunding[]>({ type: "userFunding", user: address, startTime: now - 30 * 86_400_000 }, 30).catch(() => []),
     info<RawLedger[]>({ type: "userNonFundingLedgerUpdates", user: address, startTime: now - 30 * 86_400_000 }, 30).catch(() => []),
+    info<RawPerpDex[]>({ type: "perpDexs" }, 300).catch(() => []),
   ]);
   const { fills, analysisFills } = history;
-  // shortcut: query only DEXes present in recent fills; all-DEX live updates come from the wallet WebSocket.
-  const dexNames = ["", ...new Set(fills.flatMap((fill) => fill.coin.includes(":") ? [fill.coin.split(":", 1)[0]] : []))];
+  const dexNames = ["", ...perpDexes.flatMap((dex) => dex?.name ? [dex.name] : [])];
   const [stateResults, contextResults] = await Promise.all([
     Promise.allSettled(dexNames.map((dex) => info<RawState>({ type: "clearinghouseState", user: address, ...(dex ? { dex } : {}) }, 2))),
     Promise.allSettled(dexNames.map((dex) => info<[RawMeta, RawAssetContext[]]>({ type: "metaAndAssetCtxs", ...(dex ? { dex } : {}) }, 15))),
