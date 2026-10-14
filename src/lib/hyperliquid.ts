@@ -9,6 +9,7 @@ import { displayCoin } from "./live";
 import { copyabilityScore, type CopyabilityAnalysis } from "./copyability";
 import { baseMarketSymbol, coinFlowChange, coinParticipants, type CoinParticipant } from "./coin-intelligence";
 import { fetchWithRetry } from "./fetch-retry";
+import { coinCandleRequest, findCoinMarket } from "./coin-market";
 import {
   walletFunding, walletOrders,
   type FundingEvent, type JournalEvent, type OrderEvent,
@@ -26,9 +27,6 @@ type WindowName = "day" | "week" | "month" | "allTime";
 type WindowPerformance = [WindowName, { pnl: string; roi: string; vlm: string }];
 type RawLeaderboardRow = { ethAddress: string; accountValue: string; windowPerformances: WindowPerformance[]; displayName?: string | null };
 type RawSpotState = { balances?: { coin: string; token: number; total: string; hold: string; entryNtl?: string }[] };
-type RawMeta = { universe?: { name?: string }[] };
-type RawAssetContext = { dayNtlVlm?: string; markPx?: string; oraclePx?: string; openInterest?: string; funding?: string; prevDayPx?: string };
-type RawPerpDex = { name?: string } | null;
 type RawCandle = { t: number; T: number; s: string; i: string; o: string; c: string; h: string; l: string; v: string; n: number };
 
 export type WalletRow = {
@@ -313,17 +311,12 @@ function readWalletDetail(address: string): WalletDetail {
 
 export async function getCoinDetail(coin: string): Promise<CoinDetail> {
   const safeCoin = decodeURIComponent(coin); const rawCoin = safeCoin.includes(":") ? safeCoin.slice(safeCoin.indexOf(":") + 1) : safeCoin;
-  const endTime = Date.now(); const startTime = endTime - 7 * 86_400_000;
-  const dexes = await info<RawPerpDex[]>({ type: "perpDexs" }, 300).catch(() => []);
-  const names = ["", ...dexes.flatMap((row) => row?.name ? [row.name] : [])];
-  const contexts = await Promise.allSettled(names.map((dex) => info<[RawMeta, RawAssetContext[]]>({ type: "metaAndAssetCtxs", ...(dex ? { dex } : {}) }, 15)));
-  const found = contexts.flatMap((result, dexIndex) => result.status === "fulfilled" ? (result.value[0].universe ?? []).flatMap((asset, index) => {
-    const name = asset.name ?? ""; return name === safeCoin || name === rawCoin || name.split(":").at(-1) === rawCoin ? [{ name, dex: names[dexIndex], market: result.value[1][index] ?? {} }] : [];
-  }) : [])[0];
+  const endTime = Date.now();
+  const found = await findCoinMarket(safeCoin, info);
   const movers = found ? null : await getMarketMovers().catch(() => null);
   const spot = [...(movers?.gainers ?? []), ...(movers?.losers ?? [])].find((row) => row.symbol === rawCoin);
   const resolvedCoin = found?.name ?? safeCoin;
-  const candles = found ? await info<RawCandle[]>({ type: "candleSnapshot", req: { coin: resolvedCoin, interval: "15m", startTime, endTime } }, 15).catch(() => []) : [];
+  const candles = found ? await info<RawCandle[]>(coinCandleRequest(resolvedCoin, endTime), 15).catch(() => []) : [];
   const market = found?.market ?? {}; const markPx = Number(market.markPx ?? spot?.price ?? 0); const previous = Number(market.prevDayPx ?? (spot?.change ? markPx / (1 + spot.change / 100) : markPx));
   const aliases = [...new Set([safeCoin, rawCoin, resolvedCoin])];
   const events = canonicalEvents(endTime - 86_400_000).filter((event) => aliases.includes(event.coin) || baseMarketSymbol(event.coin) === rawCoin.toUpperCase());
