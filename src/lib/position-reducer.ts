@@ -50,6 +50,24 @@ export function reducePosition(prior: PositionState | null, fill: ReducerFill): 
 }
 
 // startPosition orders tied fills; tid and arrival order cannot establish exchange order.
+function canFinishChain(fills: ReducerFill[], start: string) {
+  if (!fills.length) return true;
+  const balance = new Map<string, number>(), neighbors = new Map<string, Set<string>>();
+  for (const fill of fills) {
+    const change = fillTransition(fill); if (!change) return false;
+    const before = decimalAdd(change.before,"0"), after = decimalAdd(change.after,"0");
+    balance.set(before,(balance.get(before)??0)+1); balance.set(after,(balance.get(after)??0)-1);
+    if (!neighbors.has(before)) neighbors.set(before,new Set()); if (!neighbors.has(after)) neighbors.set(after,new Set());
+    neighbors.get(before)!.add(after); neighbors.get(after)!.add(before);
+  }
+  start=decimalAdd(start,"0");
+  const positive=[...balance].filter(([,value])=>value===1), negative=[...balance].filter(([,value])=>value===-1);
+  if ([...balance.values()].some(value=>Math.abs(value)>1) || positive.length!==negative.length || positive.length>1 || positive.length===1 && positive[0][0]!==start || !neighbors.has(start)) return false;
+  const visited=new Set<string>(), pending=[start];
+  while(pending.length) { const node=pending.pop()!; if(visited.has(node)) continue; visited.add(node); for(const neighbor of neighbors.get(node)??[]) if(!visited.has(neighbor)) pending.push(neighbor); }
+  return visited.size===neighbors.size;
+}
+
 export function orderFillChain<T extends ReducerFill>(fills: T[], initial: PositionState | null = null) {
   const ordered: T[] = []; let state = initial; const ambiguousTimes = new Set<number>();
   const sorted = [...fills].sort((a, b) => a.time - b.time);
@@ -62,6 +80,8 @@ export function orderFillChain<T extends ReducerFill>(fills: T[], initial: Posit
         const transition = j === i ? null : fillTransition(other);
         return transition && decimalEqual(transition.after, fill.startPosition!);
       }) ? [i] : []);
+      // shortcut: larger branching blocks stay unknown; raise the 128 limit only after collector latency profiling.
+      if (matching.length>1 && remaining.length<=128 && !ambiguousTimes.has(time)) matching=matching.filter(i=>canFinishChain(remaining.filter((_,j)=>i!==j),fillTransition(remaining[i])!.after));
       if (remaining.length > 1 && matching.length !== 1) { ambiguousTimes.add(time); state = null; }
       const next = remaining.splice(matching.length === 1 ? matching[0] : 0, 1)[0];
       ordered.push(next); state = reducePosition(state, next);

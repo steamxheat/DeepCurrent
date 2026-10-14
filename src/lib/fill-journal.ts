@@ -101,8 +101,8 @@ export function createFillJournal(db: DatabaseSync) {
     if (!(db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((field) => field.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
   db.exec("CREATE INDEX IF NOT EXISTS lifecycle_seq ON lifecycle_events(updated_seq)");
-  db.exec(`INSERT OR IGNORE INTO projection_jobs SELECT wallet,coin FROM lifecycle_events WHERE algorithm_version!=6;
-    UPDATE canonical_fills SET projected_revision=0 WHERE id IN (SELECT id FROM lifecycle_events WHERE algorithm_version!=6);`);
+  db.exec(`INSERT OR IGNORE INTO projection_jobs SELECT wallet,coin FROM lifecycle_events WHERE algorithm_version!=7;
+    UPDATE canonical_fills SET projected_revision=0 WHERE id IN (SELECT id FROM lifecycle_events WHERE algorithm_version!=7);`);
 
   function ingest(wallet: string, input: unknown, source: JournalSource, mode: IngestMode = "history", receivedAt = Date.now()) {
     const address = wallet.toLowerCase(); const payload = JSON.stringify(input);
@@ -181,12 +181,12 @@ export function createFillJournal(db: DatabaseSync) {
     const eventPayload = JSON.stringify(event);
     const previous = db.prepare("SELECT payload,revision,algorithm_version FROM lifecycle_events WHERE id=?").get(row.id) as { payload: string; revision: number; algorithm_version: number } | undefined;
     // Replaying history must not turn unchanged old fills into thousands of live updates.
-    if (previous?.payload === eventPayload && previous.revision === row.revision && previous.algorithm_version === 6) {
+    if (previous?.payload === eventPayload && previous.revision === row.revision && previous.algorithm_version === 7) {
       if (row.projected_revision !== row.revision) db.prepare("UPDATE canonical_fills SET projected_revision=revision WHERE id=?").run(row.id);
       return state;
     }
     db.prepare(`INSERT INTO lifecycle_events (id,wallet,coin,occurred_at,payload,revision,algorithm_version,updated_seq,projected_at,confirmed_at)
-      VALUES (?,?,?,?,?,?,6,(SELECT revision+1 FROM journal_changes WHERE id=1),?,?) ON CONFLICT(id) DO UPDATE SET
+      VALUES (?,?,?,?,?,?,7,(SELECT revision+1 FROM journal_changes WHERE id=1),?,?) ON CONFLICT(id) DO UPDATE SET
       payload=excluded.payload,revision=excluded.revision,algorithm_version=excluded.algorithm_version,updated_seq=excluded.updated_seq,
       confirmed_at=CASE WHEN excluded.confirmed_at IS NULL THEN NULL ELSE COALESCE(lifecycle_events.confirmed_at,excluded.confirmed_at) END`)
       .run(row.id, row.wallet, row.coin, row.occurred_at, eventPayload, row.revision, Date.now(), validTransition ? Date.now() : null);

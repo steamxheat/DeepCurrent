@@ -44,7 +44,7 @@ test("unconfirmed or conflicting intervening executions cannot invent a complete
     j.db.prepare("UPDATE lifecycle_events SET algorithm_version=5").run();
     const upgraded = createFillJournal(j.db); assert.ok(upgraded.db.prepare("SELECT COUNT(*) n FROM projection_jobs").get()!.n);
     upgraded.project(); assert.equal(upgraded.completed(wallet).at(-1)?.openedAt, null);
-    assert.equal(upgraded.db.prepare("SELECT MIN(algorithm_version) version FROM lifecycle_events").get()?.version, 6);
+    assert.equal(upgraded.db.prepare("SELECT MIN(algorithm_version) version FROM lifecycle_events").get()?.version, 7);
     j.db.close();
   }
 });
