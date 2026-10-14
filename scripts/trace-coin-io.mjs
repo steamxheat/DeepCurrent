@@ -19,6 +19,14 @@ globalThis.fetch = async function (input, options) {
   let body;
   try { if (String(input) === "https://api.hyperliquid.xyz/info") body = JSON.parse(options?.body || "{}"); } catch {}
   if (!["metaAndAssetCtxs", "perpDexs", "candleSnapshot"].includes(body?.type)) return fetcher(input, options);
+  if (process.env.DC_COIN_STALL === "1") {
+    const signal = options?.signal || input?.signal;
+    return new Promise((_, reject) => {
+      if (!signal) return reject(new Error("Missing upstream deadline"));
+      if (signal.aborted) return reject(signal.reason);
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  }
   const started = Date.now();
   try { const response = await fetcher(input, options); emit({ stage: "upstream", started, ended: Date.now(), operation: body.type, dex: body.dex, coin: body.req?.coin, endTime: body.req?.endTime, status: response.status }); return response; }
   catch (error) { emit({ stage: "upstream", started, ended: Date.now(), operation: body.type, error: error.name }); throw error; }

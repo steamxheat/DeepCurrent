@@ -10,6 +10,7 @@ export async function fetchWithRetry(run: () => Promise<Response>, attempts = 3,
       const header = response.headers.get("retry-after"); const retryAfter = header === null ? Number.NaN : Number(header);
       if (attempt + 1 < attempts) await pause(Number.isFinite(retryAfter) ? Math.min(2_000, retryAfter * 1_000) : 200 * 2 ** attempt);
     } catch (error) {
+      if (error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name)) throw error;
       failure = error;
       if (attempt + 1 < attempts) await pause(200 * 2 ** attempt);
     }

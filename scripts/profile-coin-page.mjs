@@ -12,6 +12,7 @@ try {
   const measurements = [];
   for (let request = 0; request < 3; request++) {
     const started = Date.now(); const response = await fetch(`${fixture.url}/coin/BTC`, { signal: AbortSignal.timeout(30000) }); const headersAt = Date.now(); const html = await response.text(); const ended = Date.now(); assert.equal(response.status, 200); assert.ok(html.includes("BTC"));
+    if (process.env.DC_COIN_STALL === "1") { assert.ok(ended - started < 6500, "Upstream stall escaped page deadline"); assert.ok(html.includes("Часть рыночных данных недоступна"), "Degraded market must be labeled"); }
     await new Promise((resolve) => setTimeout(resolve, 50));
     const rows = traces.filter((row) => row.started >= started && row.started <= ended);
     const network = rows.filter((row) => row.stage === "upstream"); let cursor = started, upstreamWallMs = 0;

@@ -16,3 +16,11 @@ test("permanent client errors are not retried", async () => {
   assert.equal(response.status, 400);
   assert.equal(calls, 1);
 });
+
+test("cancelled and timed-out requests do not restart an expired deadline", async () => {
+  for (const name of ["AbortError", "TimeoutError"]) {
+    let calls = 0;
+    await assert.rejects(fetchWithRetry(async () => { calls++; throw new DOMException("deadline", name); }, 3, async () => { assert.fail("Must not retry cancellation"); }), { name });
+    assert.equal(calls, 1);
+  }
+});

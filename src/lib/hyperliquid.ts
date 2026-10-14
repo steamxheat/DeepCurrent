@@ -73,11 +73,11 @@ export type CoinDetail = {
   updatedAt: number; source: string;
 };
 
-async function info<T>(body: Record<string, unknown>, revalidate: number): Promise<T> {
+async function info<T>(body: Record<string, unknown>, revalidate: number, signal = AbortSignal.timeout(5000), onFallback?: () => void): Promise<T> {
   const serialized = JSON.stringify(body); const key = `${revalidate}:${serialized}`;
   try {
     const response = await fetchWithRetry(() => fetch(INFO_URL, {
-      method: "POST", headers: { "content-type": "application/json" }, body: serialized,
+      method: "POST", headers: { "content-type": "application/json" }, body: serialized, signal,
       ...(revalidate <= 2 ? { cache: "no-store" as const } : { cache: "force-cache" as const, next: { revalidate } }),
     }));
     if (!response.ok) throw new Error(`Hyperliquid API: ${response.status}`);
@@ -89,7 +89,7 @@ async function info<T>(body: Record<string, unknown>, revalidate: number): Promi
     return value;
   } catch (error) {
     const fallback = infoFallbackCache.get(key);
-    if (fallback && Date.now() - fallback.storedAt <= 300_000) return fallback.value as T;
+    if (fallback && Date.now() - fallback.storedAt <= 300_000) { onFallback?.(); return fallback.value as T; }
     throw error;
   }
 }
@@ -312,11 +312,16 @@ function readWalletDetail(address: string): WalletDetail {
 export async function getCoinDetail(coin: string): Promise<CoinDetail> {
   const safeCoin = decodeURIComponent(coin); const rawCoin = safeCoin.includes(":") ? safeCoin.slice(safeCoin.indexOf(":") + 1) : safeCoin;
   const endTime = Date.now();
-  const found = await findCoinMarket(safeCoin, info);
+  const deadline = AbortSignal.timeout(4000); let degraded = false;
+  const marketInfo = async <T,>(body: Record<string, unknown>, revalidate: number): Promise<T> => {
+    try { return await info<T>(body, revalidate, deadline, () => { degraded = true; }); }
+    catch (error) { degraded = true; throw error; }
+  };
+  const found = await findCoinMarket(safeCoin, marketInfo);
   const movers = found ? null : await getMarketMovers().catch(() => null);
   const spot = [...(movers?.gainers ?? []), ...(movers?.losers ?? [])].find((row) => row.symbol === rawCoin);
   const resolvedCoin = found?.name ?? safeCoin;
-  const candles = found ? await info<RawCandle[]>(coinCandleRequest(resolvedCoin, endTime), 15).catch(() => []) : [];
+  const candles = found ? await marketInfo<RawCandle[]>(coinCandleRequest(resolvedCoin, endTime), 15).catch(() => []) : [];
   const market = found?.market ?? {}; const markPx = Number(market.markPx ?? spot?.price ?? 0); const previous = Number(market.prevDayPx ?? (spot?.change ? markPx / (1 + spot.change / 100) : markPx));
   const aliases = [...new Set([safeCoin, rawCoin, resolvedCoin])];
   const events = canonicalEvents(endTime - 86_400_000).filter((event) => aliases.includes(event.coin) || baseMarketSymbol(event.coin) === rawCoin.toUpperCase());
@@ -328,5 +333,5 @@ export async function getCoinDetail(coin: string): Promise<CoinDetail> {
     volume24h: Number(market.dayNtlVlm ?? spot?.volume ?? 0), openInterest: Number(market.openInterest ?? 0), funding: Number(market.funding ?? 0),
     candles: candles.map((row) => ({ time: row.t, open: Number(row.o), close: Number(row.c), high: Number(row.h), low: Number(row.l), volume: Number(row.v) })),
     events, snapshots, participants, hasPerpMarket: Boolean(found), changes, updatedAt: endTime,
-    source: found ? `Hyperliquid ${found.dex || "main"} + Deep Current journal` : `${spot?.exchange ?? "Spot"} market + Deep Current journal` };
+    source: `${degraded ? "Часть рыночных данных недоступна или сохранена ранее · " : ""}${found ? `Hyperliquid ${found.dex || "main"} + Deep Current journal` : `${spot?.exchange ?? "Spot"} market + Deep Current journal`}` };
 }
