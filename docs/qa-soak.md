@@ -13,3 +13,9 @@ On the server use `DC_SOAK_PRODUCTION_URL=http://127.0.0.1:3000 npm run test:soa
 The launcher prints its worker PID. Send SIGTERM to that exact worker PID to stop the run; it stops its fixture server too. Logs and temporary test data are preserved for investigation. Source updates should wait for the run to finish or explicitly stop it first, because the fixture shares the tested build read-only.
 
 Not covered: touch/visual usability, real-device installation/permission prompts, actual phone Push delivery, exchange latency for every wallet, and real copy-trading. Production collector diagnostics must be reviewed alongside QA logs. A passing synthetic run does not certify correct complete historical data.
+
+## Launch verified — 14 October 2026
+
+Source/build: `665b509`, pushed and installed after backup and all server checks. Local short soak: 5,214 checks, all 100 sessions active, 49–54 actions each, zero failures. Server short soak: 4,492 checks, zero failures. Night run: `/home/admin1337/Services/DeepCurrent/backups/qa-soak-1791938276515`, worker PID 77365, eight hours, 30-second rounds. After launch: 100/100 sessions active, at least two actions each, zero errors; production guard 44 ms; fixture listens only on 127.0.0.1:3002. This records startup, not a completed overnight result.
+
+An hourly thread follow-up named “Deep Current: ночной QA и исправления” was created to inspect this run, investigate failures, perform verified fixes and stop after reporting completion. Its local scheduled reviews require the desktop computer and app to remain running; server-side simulation does not depend on the app.
