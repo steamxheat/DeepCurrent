@@ -1,5 +1,6 @@
 import { getFillJournal, validWalletAddress } from "./fill-journal.ts";
 import { findConfluences, type ConfluenceWalletContext } from "./stats.ts";
+import { dataFresh } from "./data-freshness.ts";
 
 // One shared bounded read, not a history scan for every connected user.
 let cached: { until: number; fills: ReturnType<ReturnType<typeof getFillJournal>["evidence"]>; context: ConfluenceWalletContext; capped: boolean; groups: Map<string, ReturnType<typeof findConfluences>> } | undefined;
@@ -14,7 +15,7 @@ export function readConfluences(minutes: number, options: Parameters<typeof find
     const context: ConfluenceWalletContext = {};
     for (const wallet of new Set(fills.map((row) => row.wallet))) {
       const model = store.resource(wallet, "copyability");
-      const score = model && now - model.updatedAt < 300_000 && model.payload.confidence !== "low" && Number.isFinite(model.payload.score) ? model.payload.score : undefined;
+      const score = model && dataFresh(model.updatedAt, now, 300_000) && model.payload.confidence !== "low" && Number.isFinite(model.payload.score) ? model.payload.score : undefined;
       context[wallet] = { quality: names.get(wallet)?.quality, copyability: score };
     }
     const relationships = store.db.prepare("SELECT payload FROM wallet_resources WHERE kind='subAccounts'").all() as { payload: string }[];
@@ -24,7 +25,7 @@ export function readConfluences(minutes: number, options: Parameters<typeof find
     }
     cached = { until: now + 10_000, fills, context, capped: raw.length > 20_000, groups: new Map() };
   }
-  const key = JSON.stringify([minutes, options.minWallets ?? 2, options.minQuality ?? 0, options.minCopyability ?? 0, options.onlyOpen ?? false]);
+  const key = JSON.stringify([minutes, options.minWallets ?? 2, options.minQuality ?? 0, options.minCopyability ?? 0, options.onlyOpen ?? false, Math.floor(now / 1000)]);
   let groups = cached.groups.get(key);
   if (!groups) {
     groups = findConfluences(cached.fills, now, minutes * 60_000, cached.context, options);

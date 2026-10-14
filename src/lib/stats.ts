@@ -1,4 +1,5 @@
 import { decimalEqual, fillTransition, orderFillChain, validDecimal } from "./position-reducer.ts";
+import { dataFresh } from "./data-freshness.ts";
 
 export type Fill = {
   coin: string;
@@ -128,7 +129,7 @@ export type ConfluenceWalletContext = Record<string, { quality?: number; copyabi
 function relatedWallets(fills: Fill[], context: ConfluenceWalletContext) {
   const signatures = new Map<string, Set<string>>();
   for (const fill of fills) {
-    if (!fill.wallet || fill.source === "market") continue;
+    if (!fill.wallet || fill.source === "market" || !Number.isSafeInteger(fill.time)) continue;
     const direction = fill.side === "B" ? "B" : "S";
     const signature = `${fill.coin}:${direction}:${Math.floor(fill.time / 30_000)}`;
     const wallet = fill.wallet.toLowerCase(); const set = signatures.get(wallet) ?? new Set<string>(); set.add(signature); signatures.set(wallet, set);
@@ -151,9 +152,18 @@ function relatedWallets(fills: Fill[], context: ConfluenceWalletContext) {
 
 export function findConfluences(fills: Fill[], now = Date.now(), windowMs = 30 * 60 * 1000, context: ConfluenceWalletContext = {}, options: { minWallets?: number; minQuality?: number; minCopyability?: number; onlyOpen?: boolean } = {}) {
   type Entry = { wallet: string; walletName?: string; time: number; notional: number; coin: string; direction: "LONG" | "SHORT"; quality: number | null; copyability: number | null; positionChangePct: number | null; cluster: string; price: number; size: number; stillOpen: boolean | null; closedAt?: number };
-  const clusters = relatedWallets(fills, context);
   const latestByWallet = new Map<string, Entry>();
-  for (const fill of [...fills].sort((a, b) => a.time - b.time)) {
+  const byPosition = new Map<string, Fill[]>();
+  for (const fill of fills) if (fill.wallet && fill.source !== "market" && Number.isSafeInteger(fill.time) && fill.time <= now && now - fill.time <= windowMs) {
+    const key = `${fill.wallet.toLowerCase()}:${fill.coin}`;
+    const rows = byPosition.get(key) ?? []; rows.push(fill); byPosition.set(key, rows);
+  }
+  const ordered = [...byPosition.values()].flatMap(rows => {
+    const chain = orderFillChain(mergeFills(rows));
+    return chain.fills.filter(fill => !chain.ambiguousTimes.has(fill.time));
+  });
+  const clusters = relatedWallets(ordered, context);
+  for (const fill of ordered) {
     if (!fill.wallet || fill.source === "market" || fill.time > now || now - fill.time > windowMs) continue;
     const key = `${fill.coin}:${fill.wallet.toLowerCase()}`;
     const change = fillTransition(fill);
@@ -165,18 +175,19 @@ export function findConfluences(fills: Fill[], now = Date.now(), windowMs = 30 *
     const direction = ["OPEN", "FLIP", "ADD"].includes(change.action) ? change.direction as "LONG" | "SHORT" : null;
     if (!direction) continue;
     const existing = latestByWallet.get(key);
-    if (change.action === "ADD" && existing) continue;
-    const evidence = fill as Fill & { positionStatus?: string; closedAt?: number };
+    const evidence = fill as Fill & { positionStatus?: string; closedAt?: number; checkedAt?: number; precision?: string };
+    if (evidence.precision !== undefined && evidence.precision !== "exact") continue;
     const quality = context[fill.wallet.toLowerCase()]?.quality;
     const copyability = context[fill.wallet.toLowerCase()]?.copyability;
-    if ((options.minQuality ?? 0) > 0 && (quality === undefined || quality < options.minQuality!) || (options.minCopyability ?? 0) > 0 && (copyability === undefined || copyability < options.minCopyability!)) continue;
-    const stillOpen = evidence.positionStatus === "open" ? true : ["closed", "absent"].includes(evidence.positionStatus ?? "") ? false : null;
-    if (options.onlyOpen && stillOpen !== true) continue;
+    if ((options.minQuality ?? 0) > 0 && (!Number.isFinite(quality) || quality! < options.minQuality!) || (options.minCopyability ?? 0) > 0 && (!Number.isFinite(copyability) || copyability! < options.minCopyability!)) continue;
+    const fresh = dataFresh(evidence.checkedAt, now, 30_000);
+    const stillOpen = evidence.positionStatus === "open" && fresh ? true : evidence.positionStatus === "closed" || evidence.positionStatus === "absent" && fresh ? false : null;
+    if (change.action === "ADD" && existing) { existing.stillOpen = stillOpen; existing.closedAt = evidence.closedAt; continue; }
     latestByWallet.set(key, {
       wallet: fill.wallet.toLowerCase(), walletName: fill.walletName, time: fill.time,
       notional: Math.abs(Number(fill.px) * (change.action === "FLIP" ? after : Number(fill.sz))), coin: fill.coin, direction,
-      quality: quality ?? null,
-      copyability: copyability ?? null,
+      quality: Number.isFinite(quality) ? quality! : null,
+      copyability: Number.isFinite(copyability) ? copyability! : null,
       positionChangePct: Number.isFinite(before) && before !== 0 ? Math.abs(after - before) / Math.abs(before) * 100 : null,
       cluster: clusters.get(fill.wallet.toLowerCase()) ?? fill.wallet.toLowerCase(),
       price: Number(fill.px), size: Math.abs(["OPEN", "FLIP"].includes(change.action) ? after : after - before), stillOpen, closedAt: evidence.closedAt,
@@ -184,15 +195,16 @@ export function findConfluences(fills: Fill[], now = Date.now(), windowMs = 30 *
   }
   const groups = new Map<string, { coin: string; direction: "LONG" | "SHORT"; entries: Entry[] }>();
   for (const entry of latestByWallet.values()) {
+    if (options.onlyOpen && entry.stillOpen !== true) continue;
     const key = `${entry.coin}:${entry.direction}`;
     const group = groups.get(key) ?? { coin: entry.coin, direction: entry.direction, entries: [] };
     group.entries.push(entry); groups.set(key, group);
   }
   return [...groups.values()].map((group) => {
     const byCluster = new Map<string, Entry>();
-    for (const entry of group.entries) { const current = byCluster.get(entry.cluster); if (!current || (entry.quality ?? 0) > (current.quality ?? 0) || entry.time > current.time) byCluster.set(entry.cluster, entry); }
+    for (const entry of group.entries) { const current = byCluster.get(entry.cluster); if (!current || (entry.quality ?? 0) > (current.quality ?? 0) || entry.quality === current.quality && entry.time > current.time) byCluster.set(entry.cluster, entry); }
     const entries = [...byCluster.values()].sort((a, b) => b.time - a.time);
-    const latest = entries[0].time; const earliest = entries.at(-1)?.time ?? latest;
+    const latest = Math.max(...group.entries.map(entry => entry.time)); const earliest = Math.min(...group.entries.map(entry => entry.time));
     const knownQuality = entries.flatMap((entry) => entry.quality === null ? [] : [entry.quality]);
     const averageQuality = knownQuality.length ? knownQuality.reduce((sum, quality) => sum + quality, 0) / knownQuality.length : null;
     const totalNotional = entries.reduce((sum, entry) => sum + entry.notional, 0);

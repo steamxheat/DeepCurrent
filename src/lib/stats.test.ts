@@ -113,6 +113,43 @@ test("flip confluence counts only new exposure and missing quality stays unknown
   assert.equal(group.entries[0].quality, null); assert.equal(group.averageQuality, null);
 });
 
+test("confluence refreshes status on ADD without moving original entry or counting twice", () => {
+  const rows = [fill({ wallet: "0xa", time: 900, startPosition: "0" }), fill({ wallet: "0xa", time: 950, startPosition: "1" }), fill({ wallet: "0xb", time: 980, startPosition: "0" })]
+    .map(row => ({ ...row, positionStatus: row.time === 900 ? "unknown" : "open", checkedAt: 990 }));
+  const [group] = findConfluences(rows, 1000, 500, {}, { onlyOpen: true });
+  assert.equal(group.independentWallets, 2); assert.equal(group.entries.find(row => row.wallet === "0xa")?.time, 900);
+  assert.equal(group.totalNotional, 200); assert.equal(group.spanMs, 80);
+  assert.equal(findConfluences(rows, 31000, 60000, {}, { onlyOpen: true }).length, 0);
+  const [stale] = findConfluences(rows, 31000, 60000); assert.equal(stale.stillOpen, null);
+});
+
+test("same-timestamp close and reentry use size continuity, not arrival order", () => {
+  const open = fill({ wallet: "0xa", time: 800, startPosition: "0", sz: "2", tid: 1 });
+  const close = fill({ wallet: "0xa", time: 900, side: "A", startPosition: "2", sz: "2", tid: 2 });
+  const reentry = fill({ wallet: "0xa", time: 900, startPosition: "0", sz: "3", tid: 3 });
+  const other = fill({ wallet: "0xb", time: 950, startPosition: "0" });
+  for (const rows of [[open,close,reentry,other], [reentry,other,close,open]]) {
+    const [group] = findConfluences(rows, 1000, 500);
+    assert.equal(group.entries.find(row => row.wallet === "0xa")?.size, 3);
+    assert.equal(group.spanMs, 50); assert.equal(group.totalNotional, 400);
+  }
+});
+
+test("cluster representative is chosen by quality while span includes every participant", () => {
+  const rows = [fill({ wallet: "0xa", time: 800, startPosition: "0" }), fill({ wallet: "0xb", time: 990, startPosition: "0" }), fill({ wallet: "0xc", time: 900, startPosition: "0" })];
+  const [group] = findConfluences(rows,1000,500,{ "0xa": { cluster: "owner", quality: 90 }, "0xb": { cluster: "owner", quality: 50 }, "0xc": { quality: 80 } });
+  assert.equal(group.independentWallets,2); assert.equal(group.relatedWallets,1); assert.equal(group.allEntries.length,3);
+  assert.ok(group.wallets.includes("0xa")); assert.equal(group.spanMs,190);
+  assert.equal(findConfluences(rows,1000,500,{ "0xa": { quality: NaN }, "0xb": { quality: NaN }, "0xc": { quality: 80 } },{minQuality:60}).length,0);
+});
+
+test("duplicate deliveries do not erase a same-timestamp position; unknown status cannot pass onlyOpen", () => {
+  const a = fill({ wallet: "0xa", time: 900, startPosition: "0" }), b = fill({ wallet: "0xb", time: 950, startPosition: "0" });
+  const [group] = findConfluences([a,a,b,b],1000,500);
+  assert.equal(group.independentWallets,2); assert.equal(group.totalNotional,200);
+  assert.equal(findConfluences([a,b].map(row=>({...row,positionStatus:"open",checkedAt:1100})),1000,500,{}, {onlyOpen:true}).length,0);
+});
+
 test("position opening time survives later additions and reductions", () => {
   const fills = [
     fill({ time: 100, sz: "4", side: "B", startPosition: "0" }),
