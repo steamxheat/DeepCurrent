@@ -9,6 +9,9 @@ import { createQaBehavior } from "../src/lib/qa-behavior.ts";
 
 const hours = Number(process.argv[2] ?? 8), periodMs = Number(process.argv[3] ?? 30000);
 assert.ok(hours > 0 && hours <= 24 && periodMs >= 1000 && periodMs <= 60000);
+const userCount = Number(process.env.DC_SOAK_USERS ?? 100), concurrency = Number(process.env.DC_SOAK_CONCURRENCY ?? 4);
+assert.ok(Number.isInteger(userCount) && userCount >= 1 && userCount <= 500);
+assert.ok(Number.isInteger(concurrency) && concurrency >= 1 && concurrency <= Math.min(50, userCount));
 const started = Date.now(), deadline = started + hours * 3600000;
 const randomized = process.argv.includes("--random"), seed = Number(process.env.DC_SOAK_SEED ?? started % 4294967296);
 assert.ok(Number.isSafeInteger(seed) && seed >= 0 && seed <= 4294967295);
@@ -18,21 +21,28 @@ assert.ok(directory.startsWith(path.resolve("backups") + path.sep + "qa-soak-"),
 mkdirSync(directory, { recursive: true, mode: 0o700 });
 if (process.argv.includes("--detach")) {
   const fd = openSync(path.join(directory, "runner.log"), "a", 0o600);
-  const child = spawn(process.execPath, ["--experimental-strip-types", "scripts/soak-users.mjs", String(hours), String(periodMs), ...(randomized ? ["--random"] : [])], { detached: true, stdio: ["ignore", fd, fd], env: { ...process.env, DC_SOAK_SEED: String(seed), DC_SOAK_RUN_DIR: directory, NODE_OPTIONS: "--max-old-space-size=384" } });
-  closeSync(fd); child.unref(); console.log(JSON.stringify({ pid: child.pid, directory, hours, sessions: 100 })); process.exit(0);
+  const child = spawn(process.execPath, ["--experimental-strip-types", "scripts/soak-users.mjs", String(hours), String(periodMs), ...(randomized ? ["--random"] : []), ...(process.argv.includes("--load") ? ["--load"] : [])], { detached: true, stdio: ["ignore", fd, fd], env: { ...process.env, DC_SOAK_SEED: String(seed), DC_SOAK_RUN_DIR: directory, NODE_OPTIONS: "--max-old-space-size=384" } });
+  closeSync(fd); child.unref(); console.log(JSON.stringify({ pid: child.pid, directory, hours, sessions: userCount, concurrency })); process.exit(0);
 }
 try { setPriority(0, 10); } catch {}
 const logfile = path.join(directory, "actions.jsonl"), summaryfile = path.join(directory, "summary.json");
-const token = randomBytes(32).toString("hex"), users = Array.from({ length: 100 }, (_, id) => ({ id, cookie: "", actions: 0, errors: 0, dueAt: 0 }));
+const token = randomBytes(32).toString("hex"), users = Array.from({ length: userCount }, (_, id) => ({ id, cookie: "", actions: 0, errors: 0, dueAt: 0 }));
 const log = (entry) => appendFileSync(logfile, JSON.stringify({ at: new Date().toISOString(), ...entry }) + "\n", { mode: 0o600 });
 let fixture, checks = 0, failures = 0, round = 0, stopping = false;
 const scenarioCounts = {};
 const production = process.env.DC_SOAK_PRODUCTION_URL; let slowProduction = 0;
 assert.ok(!production || production === "http://127.0.0.1:3000", "Production guard is read-only and localhost-only");
-const summary = (state) => writeFileSync(summaryfile, JSON.stringify({ state, started, updatedAt: Date.now(), deadline, randomized, seed, scenarioCounts, users: users.length, checks, failures, round, fixture, sessions: users.map(({ id, actions, errors }) => ({ id, actions, errors })), scope: "100 virtual HTTP sessions, isolated SQLite/admin state, localhost-only. Not 100 browser UI automations or actual phone Push delivery." }, null, 2), { mode: 0o600 });
-const server = spawn(process.execPath, ["--experimental-strip-types", "scripts/check-stages-7-10.mjs", "--keep", "--soak"], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, DC_SOAK_TEST_TOKEN: token } });
+const summary = (state) => writeFileSync(summaryfile, JSON.stringify({ state, started, updatedAt: Date.now(), deadline, randomized, seed, scenarioCounts, users: users.length, concurrency, checks, failures, round, fixture, sessions: users.map(({ id, actions, errors }) => ({ id, actions, errors })), scope: `${userCount} virtual HTTP sessions with at most ${concurrency} concurrent action chains, isolated SQLite/admin state, localhost-only. Not complete browsers, paid entitlement/billing or actual phone Push delivery.` }, null, 2), { mode: 0o600 });
+const server = spawn(process.execPath, ["--experimental-strip-types", "scripts/check-stages-7-10.mjs", "--keep", "--soak", ...(process.argv.includes("--load") ? ["--load"] : [])], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, DC_SOAK_TEST_TOKEN: token } });
 let output = "";
-server.stdout.on("data", (chunk) => { output += chunk; for (const line of output.split("\n")) { try { const value = JSON.parse(line); if (value.fixture) fixture = value; } catch {} } output = output.slice(-20000); });
+server.stdout.on("data", (chunk) => {
+  output += chunk; let boundary;
+  while ((boundary = output.indexOf("\n")) >= 0) {
+    const line = output.slice(0, boundary); output = output.slice(boundary + 1);
+    try { const value = JSON.parse(line); if (value.fixture) fixture = value; } catch {}
+  }
+  if (output.length > 200000) { log({ stage: "fixture_output_overflow" }); stop(); }
+});
 server.stderr.on("data", (chunk) => log({ stage: "fixture_server", message: String(chunk).slice(0, 3000) }));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const stop = () => { stopping = true; server.kill("SIGTERM"); };
@@ -108,10 +118,10 @@ async function action(user) {
 }
 try {
   for (let wait = 0; !fixture && wait < 300; wait++) { assert.equal(server.exitCode, null, "Fixture exited before startup"); await sleep(100); }
-  assert.ok(fixture, "Fixture did not start"); log({ stage: "started", users: 100, fixture: fixture.fixture, durationHours: hours }); summary("running");
+  assert.ok(fixture, "Fixture did not start"); log({ stage: "started", users: userCount, concurrency, fixture: fixture.fixture, durationHours: hours }); summary("running");
   while (!stopping && Date.now() < deadline) {
     assert.equal(server.exitCode, null, "Fixture server stopped"); const began = Date.now(); let index = 0, roundErrors = 0;
-    await Promise.all(Array.from({ length: 4 }, async () => { while (!stopping && index < users.length) { const user = users[index++], beforeErrors = user.errors; try { await action(user); } catch (error) { roundErrors++; if (user.errors === beforeErrors) { failures++; user.errors++; } log({ stage: "scenario_failed", user: user.id, round, error: error.message }); } } }));
+    await Promise.all(Array.from({ length: concurrency }, async () => { while (!stopping && index < users.length) { const user = users[index++], beforeErrors = user.errors; try { await action(user); } catch (error) { roundErrors++; if (user.errors === beforeErrors) { failures++; user.errors++; } log({ stage: "scenario_failed", user: user.id, round, error: error.message }); } } }));
     round++; summary("running"); if (roundErrors >= 5) throw new Error("Five failures in one round; stopped to avoid repeated load");
     if (production) {
       const began = Date.now(); let ok = false;

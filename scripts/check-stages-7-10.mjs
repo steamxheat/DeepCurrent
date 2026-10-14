@@ -18,7 +18,11 @@ store.status("leaderboard", { leaderboardRows: wallets.map((wallet) => ({ ethAdd
 store.status("mids", { prices: { BTC: 100, ETH: 120, SOL: 100 }, receivedAt: now });
 store.status("collector", { connected: false, acknowledgedMarkets: 0, exactWallets: [], marketCount: 3, lastReceive: now, mode: "shadow" });
 let tid = 0;
-const add = (wallet, overrides = {}) => store.ingest(wallet, { coin: "BTC", time: now - 600000 + tid * 1000, tid: ++tid, side: "B", px: "100", sz: "1", startPosition: "0", dir: "Open Long", closedPnl: "0", fee: "1", hash: `0x${"a".repeat(64)}`, ...overrides }, "userFills", "history", now);
+const add = (wallet, overrides = {}) => {
+  const result = store.ingest(wallet, { coin: "BTC", time: now - 600000 + tid * 1000, tid: ++tid, side: "B", px: "100", sz: "1", startPosition: "0", dir: "Open Long", closedPnl: "0", fee: "1", hash: `0x${"a".repeat(64)}`, ...overrides }, "userFills", "history", Date.now());
+  assert.equal(result.error, null, "Fixture execution was rejected; no successful live QA without new executions");
+  return result;
+};
 for (const wallet of wallets.slice(0, 3)) add(wallet.address);
 add(wallets[3].address, { coin: "ETH", time: now - 900000 }); add(wallets[3].address, { coin: "ETH", time: now - 3000, side: "A", startPosition: "1", closedPnl: "20", px: "120", dir: "Close Long" });
 add(wallets[4].address, { coin: "SOL", startPosition: "10" });
@@ -36,10 +40,12 @@ function snapshots() {
 }
 snapshots();
 const port = process.argv.includes("--soak") ? "3002" : "3001", url = `http://localhost:${port}`;
+const qaUsers = Number(process.env.DC_SOAK_USERS ?? 100);
+assert.ok(Number.isInteger(qaUsers) && qaUsers >= 1 && qaUsers <= 500);
 // Test runtime caches must never share the production build directory.
 cpSync(path.resolve(".next"), path.join(directory, ".next"), { recursive: true, filter: (name) => !name.split(path.sep).includes("cache") });
 for (const item of ["node_modules", "public", "package.json", "next.config.ts"]) symlinkSync(path.resolve(item), path.join(directory, item));
-const child = spawn(process.execPath, [path.resolve("node_modules/next/dist/bin/next"), "start", "-p", port, "--hostname", "127.0.0.1"], { cwd: directory, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, APP_URL: url, DC_JOURNAL_MODE: "shadow", TELEGRAM_BOT_TOKEN: process.argv.includes("--soak") ? process.env.DC_SOAK_TEST_TOKEN || "" : "", ADMIN_TELEGRAM_IDS: process.argv.includes("--soak") ? Array.from({ length: 100 }, (_, index) => String(900000 + index)).join(",") : "", VAPID_PUBLIC_KEY: "", VAPID_PRIVATE_KEY: "" } });
+const child = spawn(process.execPath, [path.resolve("node_modules/next/dist/bin/next"), "start", "-p", port, "--hostname", "127.0.0.1"], { cwd: directory, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, APP_URL: url, DC_JOURNAL_MODE: "shadow", TELEGRAM_BOT_TOKEN: process.argv.includes("--soak") ? process.env.DC_SOAK_TEST_TOKEN || "" : "", ADMIN_TELEGRAM_IDS: process.argv.includes("--soak") ? Array.from({ length: qaUsers }, (_, index) => String(900000 + index)).join(",") : "", VAPID_PUBLIC_KEY: "", VAPID_PRIVATE_KEY: "" } });
 child.stdout.on("data", () => {}); child.stderr.on("data", (chunk) => { const message = String(chunk); if (!message.includes("ExperimentalWarning") && !message.includes("trace-warnings")) process.stderr.write(message); });
 let stopped = false; let timer;
 function stop() { if (stopped) return; stopped = true; clearInterval(timer); child.kill("SIGTERM"); store.db.close(); }
@@ -105,7 +111,7 @@ try {
     }
     store.project(2000, 10000); store.status("targets", { wallets: [...wallets, ...extra] });
   }
-  console.log(JSON.stringify({ checks, url, walletUrl: `${url}/wallet/${wallets[0].address}`, wallets: wallets.map(row => row.address), fixture: directory,
+  console.log(JSON.stringify({ checks, url, walletUrl: `${url}/wallet/${wallets[0].address}`, wallets: store.status("targets").payload.wallets.map(row => row.address), fixture: directory,
     loadWallets: store.status("targets").payload.wallets.length, savedEvents: store.db.prepare("SELECT COUNT(*) count FROM lifecycle_events").get().count,
     productionChanged: false, externalNotificationsSent: false }));
   if (process.argv.includes("--keep")) {

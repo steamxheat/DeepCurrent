@@ -1,5 +1,11 @@
 # 100-session overnight QA
 
+## 500-session acceptance update
+
+`DC_SOAK_USERS=500 DC_SOAK_CONCURRENCY=25 npm run test:soak -- 0.045 1000 --random --load` uses 500 separate identities and the isolated 1,000-wallet fixture. The count of sessions is not the number of concurrent HTTP requests. Existing defaults remain 100 sessions / 4 action chains. Persistent SSE ramp is separate: `node scripts/check-live-load.mjs http://127.0.0.1:3002 25`, while that fixture is running. It requires every client to receive actual new synthetic executions after connecting, not only heartbeats or reset history.
+
+**Correction to older runs:** the original fixture reused its startup receivedAt for future generated fills. After one minute the journal rejected new synthetic executions; zero HTTP failures in those runs do not establish continuous event delivery. The generator now timestamps each receipt and asserts accepted ingestion. Preserve old logs and label them HTTP-only for this part of acceptance. Details: `docs/free-data-500-acceptance-2026-10-14.md`. Paid billing/entitlement and real phone Push are not implemented or validated by fake-admin sessions.
+
 `npm run test:soak -- 8 30000 --detach` starts 100 independent virtual HTTP sessions for eight hours. Four requests run concurrently; sessions exercise different scenarios each round. This is not 100 real browsers or a promise of complete UI coverage.
 
 The fixture runs on **127.0.0.1:3002 only** with temporary SQLite and separate admin JSON. All 100 test identities have administrator access **only on that fixture** using a generated dummy signing token. Real production cookies, tokens, admin roles and user records are not used. Telegram and Web Push delivery credentials are disabled. No new PM2 service is created.
