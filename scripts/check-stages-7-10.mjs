@@ -105,7 +105,7 @@ try {
     }
     store.project(2000, 10000); store.status("targets", { wallets: [...wallets, ...extra] });
   }
-  console.log(JSON.stringify({ checks, url, walletUrl: `${url}/wallet/${wallets[0].address}`, fixture: directory,
+  console.log(JSON.stringify({ checks, url, walletUrl: `${url}/wallet/${wallets[0].address}`, wallets: wallets.map(row => row.address), fixture: directory,
     loadWallets: store.status("targets").payload.wallets.length, savedEvents: store.db.prepare("SELECT COUNT(*) count FROM lifecycle_events").get().count,
     productionChanged: false, externalNotificationsSent: false }));
   if (process.argv.includes("--keep")) {
