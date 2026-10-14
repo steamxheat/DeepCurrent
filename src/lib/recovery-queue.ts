@@ -19,6 +19,11 @@ export function createRecoveryQueue(db: DatabaseSync) {
     },
     get,
     has: (wallet: string) => Boolean(get(wallet)),
+    seedMissing(wallets: Iterable<string>, hasCoverage: (wallet: string) => boolean): number {
+      let added=0;
+      for(const wallet of wallets) if(!hasCoverage(wallet) && !queue.has(wallet)) { queue.add(wallet); added++; }
+      return added;
+    },
     complete: (wallet: string, revision: number) => db.prepare("DELETE FROM recovery_jobs WHERE wallet=? AND revision=?").run(wallet.toLowerCase(), revision).changes > 0,
     defer: (wallet: string, delayMs: number, error: string | null = null) => {
       if (!Number.isSafeInteger(delayMs) || delayMs < 0) throw new Error("Invalid recovery delay");

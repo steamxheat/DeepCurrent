@@ -8,6 +8,17 @@ import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { createRecoveryQueue } from "./recovery-queue.ts";
 
+test("initial history is queued for every uncovered target, without resetting existing attempts",()=>{
+  const db=new DatabaseSync(":memory:"), queue=createRecoveryQueue(db);
+  try {
+    const wallets=Array.from({length:1000},(_,i)=>`0x${i.toString(16).padStart(40,"0")}`);
+    queue.add(wallets[1],10,20); queue.defer(wallets[1],30000,"offline"); const original=queue.get(wallets[1]);
+    assert.equal(queue.seedMissing(wallets,wallet=>wallet===wallets[0]),998); assert.equal(queue.size,999);
+    assert.equal(queue.has(wallets[0]),false); assert.deepEqual(queue.get(wallets[1]),original);
+    assert.equal(queue.seedMissing(wallets,wallet=>wallet===wallets[0]),0);
+  } finally { db.close(); }
+});
+
 test("a killed worker preserves committed recovery jobs and a new process resumes them", { timeout: 10000 }, async (context) => {
   const directory = mkdtempSync(join(tmpdir(), "dc-recovery-crash-"));
   const filename = join(directory, "queue.sqlite"), moduleUrl = new URL("./recovery-queue.ts", import.meta.url).href;

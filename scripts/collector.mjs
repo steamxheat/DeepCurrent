@@ -110,6 +110,8 @@ async function refreshTargets() {
   watchedWallets = new Set(getWatchedWallets());
   for (const wallet of watchedWallets) if (validWalletAddress(wallet) && !targets.has(wallet)) targets.set(wallet, { address: wallet, name: short(wallet), pnl: 0 });
   journal.status("targets", { wallets: [...targets.values()], sourceCount: payload.leaderboardRows.length });
+  const seeded=transaction(journal.db,()=>recoverQueue.seedMissing(targets.keys(), wallet=>Boolean(journal.getCoverage(wallet))));
+  if(seeded) health.event("recovery_seeded",{count:seeded,stage:"missing_initial_history"});
 }
 async function catalog() {
   const [dexes, spot] = await Promise.all([post({ type: "perpDexs" }), post({ type: "spotMeta" })]);

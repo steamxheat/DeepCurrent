@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-const kinds = new Set(["viewer_priority", "start", "stop", "connect", "disconnect", "stream_error", "recovery_ok", "recovery_failed", "confirmation_failed", "fill_rejected", "projection_failed", "storage_stop", "http", "snapshot_failed", "resource_failed", "delivery_failed", "fatal", "targets_failed"]);
+const kinds = new Set(["recovery_seeded", "viewer_priority", "start", "stop", "connect", "disconnect", "stream_error", "recovery_ok", "recovery_failed", "confirmation_failed", "fill_rejected", "projection_failed", "storage_stop", "http", "snapshot_failed", "resource_failed", "delivery_failed", "fatal", "targets_failed"]);
 
 export function diagnosticError(error: unknown) {
   return (error instanceof Error ? error.stack || `${error.name}: ${error.message}` : typeof error === "string" ? error : "Unknown error")
