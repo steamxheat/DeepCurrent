@@ -15,7 +15,10 @@ export async function sendWebPush(userId: string, payload: { title: string; body
   for (const subscription of pushSubscriptionsForUser(userId).filter((subscription) => !payload.endpoint || subscription.endpoint === payload.endpoint)) {
     if (!validPushEndpoint(subscription.endpoint)) { removePushSubscriptionByEndpoint(subscription.endpoint); continue; }
     try {
-      await webpush.sendNotification({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, JSON.stringify({ title: payload.title, body: payload.body, url: payload.url, eventId: payload.eventId }), { TTL: 60, timeout: 15_000 }); sent++;
+      // web-push uses https.request, not fetch; pass the server's proxy explicitly.
+      await webpush.sendNotification({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, JSON.stringify({ title: payload.title, body: payload.body, url: payload.url, eventId: payload.eventId }), {
+        TTL: 60, timeout: 15_000, proxy: process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy,
+      }); sent++;
     } catch (error) {
       const status = (error as { statusCode?: number }).statusCode;
       if (status === 404 || status === 410) removePushSubscriptionByEndpoint(subscription.endpoint);

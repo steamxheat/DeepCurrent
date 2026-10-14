@@ -11,8 +11,10 @@ test("push retries a failed destination without sending again to a successful de
   const { savePushSubscription } = await import("./notification-store.ts"); const { sendWebPush } = await import("./web-push-delivery.ts");
   const a = "https://fcm.googleapis.com/fcm/send/a", b = "https://fcm.googleapis.com/fcm/send/b", calls: string[] = [];
   for (const endpoint of [a, b]) savePushSubscription("test-user", { endpoint, p256dh: "test", auth: "test" });
-  const original = webpush.sendNotification; let failed = false;
-  webpush.sendNotification = async (subscription) => {
+  const original = webpush.sendNotification; const previousProxy = process.env.HTTPS_PROXY; let failed = false;
+  process.env.HTTPS_PROXY = "http://127.0.0.1:8799";
+  webpush.sendNotification = async (subscription, _payload, options) => {
+    assert.equal(options?.proxy, "http://127.0.0.1:8799");
     calls.push(subscription.endpoint);
     if (subscription.endpoint === b && !failed) { failed = true; throw new Error("temporary failure"); }
     return { statusCode: 201, headers: {}, body: "accepted" };
@@ -22,5 +24,5 @@ test("push retries a failed destination without sending again to a successful de
     await assert.rejects(sendWebPush("test-user", { title: "test", body: "test", url: "/", endpoint: b }), /delivery failures/);
     await sendWebPush("test-user", { title: "test", body: "test", url: "/", endpoint: b });
     assert.deepEqual(calls, [a, b, b]);
-  } finally { webpush.sendNotification = original; }
+  } finally { webpush.sendNotification = original; if (previousProxy === undefined) delete process.env.HTTPS_PROXY; else process.env.HTTPS_PROXY = previousProxy; }
 });
