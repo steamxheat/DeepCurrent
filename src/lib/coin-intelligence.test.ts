@@ -41,3 +41,9 @@ test("coin participants prefer a current position and keep observed activity sep
     { wallet: "0x2", walletName: "Beta", direction: "SHORT", notional: 500, lastTime: 950, events: 2, kind: "activity" },
   ]);
 });
+
+test("stale and future coin snapshots cannot become current participants", () => {
+  const snapshot: PositionSnapshot = { wallet: "0x1", coin: "BTC", capturedAt: 100, size: 2, entryPx: 90, positionValue: 180, unrealizedPnl: 20, leverage: 5, liquidationPx: null, marginUsed: 36, source: "state" };
+  assert.deepEqual(coinParticipants([], [snapshot], 30_100), []);
+  assert.deepEqual(coinParticipants([], [snapshot], 99), []);
+});

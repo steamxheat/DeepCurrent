@@ -9,7 +9,8 @@ import { displayCoin } from "./live";
 import { copyabilityScore, type CopyabilityAnalysis } from "./copyability";
 import { baseMarketSymbol, coinFlowChange, coinParticipants, type CoinParticipant } from "./coin-intelligence";
 import { fetchWithRetry } from "./fetch-retry";
-import { coinCandleRequest, findCoinMarket } from "./coin-market";
+import { coinCandleRequest, coinMarketNumbers, findCoinMarket } from "./coin-market";
+import { dataFresh, marketNumber, midsSnapshot } from "./data-freshness";
 import {
   walletFunding, walletOrders,
   type FundingEvent, type JournalEvent, type OrderEvent,
@@ -40,9 +41,10 @@ export type CoinFlow = { coin: string; buys: number; sells: number; realizedPnl:
 export type MarketMover = {
   symbol: string; exchange: "Binance" | "Bybit"; price: number; change: number; volume: number;
   wallets: number; longWallets: number; shortWallets: number; longNotional: number; shortNotional: number; positionUpdatedAt: number;
+  marketUpdatedAt?: number;
 };
 export type DashboardData = {
-  wallets: WalletRow[]; prices: Record<string, number>; fills: PulseFill[];
+  wallets: WalletRow[]; prices: Record<string, number>; pricesAt?: number; fills: PulseFill[];
   tracked: { address: string; name: string }[]; liveCoins: string[]; sourceCount: number;
   coinNames: Record<string, string>; tradeCoverage: number;
   coinFlow: CoinFlow[]; marketMovers: { gainers: MarketMover[]; losers: MarketMover[] };
@@ -73,23 +75,26 @@ export type CoinDetail = {
   updatedAt: number; source: string;
 };
 
-async function info<T>(body: Record<string, unknown>, revalidate: number, signal = AbortSignal.timeout(5000), onFallback?: () => void): Promise<T> {
+async function info<T>(body: Record<string, unknown>, revalidate: number, signal = AbortSignal.timeout(5000), onRead?: (at: number, fallback: boolean) => void): Promise<T> {
   const serialized = JSON.stringify(body); const key = `${revalidate}:${serialized}`;
+  const cached = infoFallbackCache.get(key);
+  if (cached && dataFresh(cached.storedAt, Date.now(), revalidate * 1000)) { onRead?.(cached.storedAt, false); return cached.value as T; }
   try {
     const response = await fetchWithRetry(() => fetch(INFO_URL, {
       method: "POST", headers: { "content-type": "application/json" }, body: serialized, signal,
-      ...(revalidate <= 2 ? { cache: "no-store" as const } : { cache: "force-cache" as const, next: { revalidate } }),
+      cache: "no-store",
     }));
     if (!response.ok) throw new Error(`Hyperliquid API: ${response.status}`);
     const value = await response.json() as T;
+    const receivedAt = Date.now(); onRead?.(receivedAt, false);
     if (!["userFills", "userFillsByTime", "historicalOrders", "userFunding", "userNonFundingLedgerUpdates"].includes(String(body.type))) {
-      infoFallbackCache.set(key, { value, storedAt: Date.now() });
+      infoFallbackCache.set(key, { value, storedAt: receivedAt });
       if (infoFallbackCache.size > 200) infoFallbackCache.delete(infoFallbackCache.keys().next().value!);
     }
     return value;
   } catch (error) {
     const fallback = infoFallbackCache.get(key);
-    if (fallback && Date.now() - fallback.storedAt <= 300_000) { onFallback?.(); return fallback.value as T; }
+    if (fallback && dataFresh(fallback.storedAt, Date.now(), 300_000)) { onRead?.(fallback.storedAt, true); return fallback.value as T; }
     throw error;
   }
 }
@@ -97,7 +102,7 @@ async function info<T>(body: Record<string, unknown>, revalidate: number, signal
 
 function performance(row: RawLeaderboardRow, name: WindowName) {
   const value = row.windowPerformances.find(([window]) => window === name)?.[1];
-  return { pnl: Number(value?.pnl ?? 0), roi: Number(value?.roi ?? 0) * 100, vlm: Number(value?.vlm ?? 0) };
+  return { pnl: marketNumber(value?.pnl), roi: marketNumber(value?.roi) * 100, vlm: marketNumber(value?.vlm) };
 }
 
 async function getLeaderboard(limit: number) {
@@ -188,8 +193,8 @@ const validMover = (symbol: string, volume: number) => symbol.endsWith("USDT") &
 async function getMarketMovers() {
   if (marketMoversCache && marketMoversCache.expires > Date.now()) return marketMoversCache.value;
   const savedBinance = getFillJournal().status("tickers:binance"); const savedBybit = getFillJournal().status("tickers:bybit");
-  const binance = { status: savedBinance && Date.now() - savedBinance.updatedAt < 180_000 ? "fulfilled" : "rejected", value: savedBinance?.payload as { symbol: string; lastPrice: string; priceChangePercent: string; quoteVolume: string }[] | undefined };
-  const bybit = { status: savedBybit && Date.now() - savedBybit.updatedAt < 180_000 ? "fulfilled" : "rejected", value: savedBybit?.payload as { result?: { list?: { symbol: string; lastPrice: string; price24hPcnt: string; turnover24h: string }[] } } | undefined };
+  const binance = { status: dataFresh(savedBinance?.updatedAt, Date.now(), 180_000) ? "fulfilled" : "rejected", value: savedBinance?.payload as { symbol: string; lastPrice: string; priceChangePercent: string; quoteVolume: string }[] | undefined };
+  const bybit = { status: dataFresh(savedBybit?.updatedAt, Date.now(), 180_000) ? "fulfilled" : "rejected", value: savedBybit?.payload as { result?: { list?: { symbol: string; lastPrice: string; price24hPcnt: string; turnover24h: string }[] } } | undefined };
   const coverage = new Map<string, Omit<MarketMover, "symbol" | "exchange" | "price" | "change" | "volume">>();
   const snapshots = getFillJournal().currentSnapshots(Date.now() - 30_000);
   const bySymbol = new Map<string, typeof snapshots>();
@@ -203,7 +208,7 @@ async function getMarketMovers() {
   const rows: MarketMover[] = [];
   const mover = (symbol: string, exchange: "Binance" | "Bybit", price: number, change: number, volume: number) => {
     const positions = coverage.get(symbol) ?? { wallets: 0, longWallets: 0, shortWallets: 0, longNotional: 0, shortNotional: 0, positionUpdatedAt: 0 };
-    return { symbol, exchange, price, change, volume, ...positions };
+    return { symbol, exchange, price, change, volume, ...positions, marketUpdatedAt: (exchange === "Binance" ? savedBinance : savedBybit)?.updatedAt ?? 0 };
   };
   if (binance.status === "fulfilled") rows.push(...(binance.value ?? []).filter((item) => validMover(item.symbol, Number(item.quoteVolume))).map((item) =>
     mover(item.symbol.slice(0, -4), "Binance", Number(item.lastPrice), Number(item.priceChangePercent), Number(item.quoteVolume))));
@@ -230,15 +235,15 @@ export async function getDashboardData(): Promise<DashboardData> {
 
 async function loadDashboardData(): Promise<DashboardData> {
   const warnings: string[] = [];
+  const quotes = midsSnapshot(getFillJournal().status("mids")?.payload, Date.now());
   const config = await getAdminConfig();
-  const [walletsResult, midsResult, marketsResult] = await Promise.allSettled([
-    getLeaderboard(config.trackedWallets), Promise.resolve((getFillJournal().status("mids")?.payload?.prices ?? {}) as Record<string, string>),
+  const [walletsResult, marketsResult] = await Promise.allSettled([
+    getLeaderboard(config.trackedWallets),
     getMarketCatalog(config.liveMarkets),
   ]);
   const wallets = walletsResult.status === "fulfilled" ? walletsResult.value.rows : [];
-  const mids = midsResult.status === "fulfilled" ? midsResult.value : {};
   if (walletsResult.status === "rejected") warnings.push("Рейтинг временно недоступен");
-  if (midsResult.status === "rejected") warnings.push("Котировки временно недоступны");
+  if (!dataFresh(quotes.pricesAt, Date.now(), 30_000)) warnings.push("Котировки недоступны или устарели");
   const collector = getFillJournal().status("collector");
   if (!collector || Date.now() - collector.updatedAt > 5000 || !collector.payload.connected) warnings.push("Сборщик данных не подключён · показаны сохранённые данные");
   const catalog = marketsResult.status === "fulfilled" ? marketsResult.value : { markets: [], coinNames: {}, partial: true };
@@ -252,7 +257,7 @@ async function loadDashboardData(): Promise<DashboardData> {
   if (!movers.positionCoverage) warnings.push("Нет свежих снимков позиций для сопоставления с движением рынка");
   return {
     wallets, fills: pulse.fills, tracked: pulse.tracked,
-    prices: Object.fromEntries(["BTC", "ETH", "SOL", "HYPE", "XRP", "DOGE"].map((coin) => [coin, Number(mids[coin] ?? 0)])),
+    prices: quotes.prices, pricesAt: quotes.pricesAt,
     liveCoins: catalog.markets, coinNames: catalog.coinNames, tradeCoverage: wallets.length,
     coinFlow: flow, marketMovers: { gainers: movers.gainers, losers: movers.losers },
     sourceCount: walletsResult.status === "fulfilled" ? walletsResult.value.sourceCount : 0, config,
@@ -312,9 +317,9 @@ function readWalletDetail(address: string): WalletDetail {
 export async function getCoinDetail(coin: string): Promise<CoinDetail> {
   const safeCoin = decodeURIComponent(coin); const rawCoin = safeCoin.includes(":") ? safeCoin.slice(safeCoin.indexOf(":") + 1) : safeCoin;
   const endTime = Date.now();
-  const deadline = AbortSignal.timeout(4000); let degraded = false;
+  const deadline = AbortSignal.timeout(4000); let degraded = false; const marketTimes = new Map<string, number>();
   const marketInfo = async <T,>(body: Record<string, unknown>, revalidate: number): Promise<T> => {
-    try { return await info<T>(body, revalidate, deadline, () => { degraded = true; }); }
+    try { return await info<T>(body, revalidate, deadline, (at, fallback) => { if (fallback) degraded = true; if (body.type === "metaAndAssetCtxs") marketTimes.set(String(body.dex ?? ""), at); }); }
     catch (error) { degraded = true; throw error; }
   };
   const found = await findCoinMarket(safeCoin, marketInfo);
@@ -322,16 +327,15 @@ export async function getCoinDetail(coin: string): Promise<CoinDetail> {
   const spot = [...(movers?.gainers ?? []), ...(movers?.losers ?? [])].find((row) => row.symbol === rawCoin);
   const resolvedCoin = found?.name ?? safeCoin;
   const candles = found ? await marketInfo<RawCandle[]>(coinCandleRequest(resolvedCoin, endTime), 15).catch(() => []) : [];
-  const market = found?.market ?? {}; const markPx = Number(market.markPx ?? spot?.price ?? 0); const previous = Number(market.prevDayPx ?? (spot?.change ? markPx / (1 + spot.change / 100) : markPx));
+  const metrics = coinMarketNumbers(found?.market ?? {}, spot);
   const aliases = [...new Set([safeCoin, rawCoin, resolvedCoin])];
   const events = canonicalEvents(endTime - 86_400_000).filter((event) => aliases.includes(event.coin) || baseMarketSymbol(event.coin) === rawCoin.toUpperCase());
   const snapshots = getFillJournal().currentSnapshots(endTime - 30_000).filter((row) => aliases.includes(row.coin) || baseMarketSymbol(row.coin) === rawCoin.toUpperCase());
   const participants = coinParticipants(events, snapshots, endTime);
   const windows = { "5m": 300_000, "1h": 3_600_000, "4h": 14_400_000, "24h": 86_400_000 } as const;
   const changes = Object.fromEntries(Object.entries(windows).map(([label, duration]) => [label, coinFlowChange(events, endTime, duration)])) as CoinDetail["changes"];
-  return { coin: rawCoin, markPx, oraclePx: Number(market.oraclePx ?? 0), change24h: spot?.change ?? (previous ? (markPx - previous) / previous * 100 : 0),
-    volume24h: Number(market.dayNtlVlm ?? spot?.volume ?? 0), openInterest: Number(market.openInterest ?? 0), funding: Number(market.funding ?? 0),
+  return { coin: rawCoin, ...metrics,
     candles: candles.map((row) => ({ time: row.t, open: Number(row.o), close: Number(row.c), high: Number(row.h), low: Number(row.l), volume: Number(row.v) })),
-    events, snapshots, participants, hasPerpMarket: Boolean(found), changes, updatedAt: endTime,
+    events, snapshots, participants, hasPerpMarket: Boolean(found), changes, updatedAt: found ? marketTimes.get(found.dex) ?? 0 : spot?.marketUpdatedAt ?? 0,
     source: `${degraded ? "Часть рыночных данных недоступна или сохранена ранее · " : ""}${found ? `Hyperliquid ${found.dex || "main"} + Deep Current journal` : `${spot?.exchange ?? "Spot"} market + Deep Current journal`}` };
 }

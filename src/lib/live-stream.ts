@@ -1,5 +1,6 @@
 import { getFillJournal } from "./fill-journal.ts";
 import { encodeLiveFills } from "./live-wire.ts";
+import { dataFresh, midsSnapshot } from "./data-freshness.ts";
 
 const listeners = new Set<(message: string) => void>();
 let timer: ReturnType<typeof setInterval> | undefined; let sequence = -1; let lastStatus = 0;
@@ -8,10 +9,10 @@ let snapshotFills: unknown[] = [];
 function update(force = false) {
   const store = getFillJournal(); const revision = store.revision(); const now = Date.now();
   const collector = store.status("collector"); const catalog = store.status("catalog")?.payload;
-  const priceState = store.status("mids")?.payload; const prices = priceState?.prices ?? {};
-  const displayPrices = Object.fromEntries(["BTC", "ETH", "SOL", "HYPE", "XRP", "DOGE"].map((coin) => [coin, Number(prices[coin] ?? 0)]));
-  const healthy = Boolean(collector && now - collector.updatedAt < 5000 && collector.payload.connected && collector.payload.acknowledgedMarkets > 0
-    && collector.payload.acknowledgedMarkets === collector.payload.marketCount && now - collector.payload.lastReceive < 60_000);
+  const priceState = store.status("mids")?.payload;
+  const { prices: displayPrices } = midsSnapshot(priceState, now);
+  const healthy = Boolean(collector && dataFresh(collector.updatedAt, now, 5000) && collector.payload.connected && collector.payload.acknowledgedMarkets > 0
+    && collector.payload.acknowledgedMarkets === collector.payload.marketCount && dataFresh(collector.payload.lastReceive, now, 60_000));
   const reset = force || sequence < 0; const changed = revision !== sequence;
   const delta = changed && !reset ? store.eventsSince(sequence, now - 60_000, 101) : [];
   // The ticker is bounded; the complete, filterable history lives in /api/events.

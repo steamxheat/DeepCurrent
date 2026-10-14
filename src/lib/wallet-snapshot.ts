@@ -2,6 +2,7 @@ import { getFillJournal, type ScopeSnapshot } from "./fill-journal.ts";
 import { decimalEqual, validDecimal } from "./position-reducer.ts";
 import { displayCoin } from "./live.ts";
 import type { Position } from "./hyperliquid";
+import { dataFresh, marketNumber } from "./data-freshness.ts";
 
 export type WalletSnapshot = {
   address: string; positions: Position[]; updatedAt: number; accountValue: number;
@@ -21,7 +22,7 @@ export function streamScopeSnapshots(wallet: string, value: unknown, receivedAt:
 export function snapshotRefreshScopes(scopes: ScopeSnapshot[], dexNames: string[], streaming: boolean, now = Date.now()) {
   return [...dexNames.filter((name) => {
     const scope = scopes.find((row) => row.scope === name);
-    return !streaming || !scope?.payload || scope.error || now - scope.receivedAt >= 20_000;
+    return !streaming || !scope?.payload || scope.error || !dataFresh(scope.receivedAt, now, 20_000);
   }), "spot"];
 }
 
@@ -30,7 +31,7 @@ export function readWalletSnapshot(address: string, store = getFillJournal(), no
   const coverage = store.getCoverage(address); const states = scopes.filter((scope) => scope.scope !== "spot" && scope.payload);
   const unavailableScopes = [...(catalog?.dexNames ?? [""]), "spot"].filter((name) => {
     const scope = scopes.find((row) => row.scope === name);
-    return !scope?.payload || scope.error || now - scope.receivedAt > 30_000;
+    return !scope?.payload || scope.error || !dataFresh(scope.receivedAt, now, 30_000);
   });
   const positions = states.flatMap((scope) => {
     const members = scope.payload!.assetPositions as { position: { coin: string; szi: string; entryPx: string; positionValue: string; unrealizedPnl: string; marginUsed?: string; leverage?: { value?: number }; liquidationPx?: string | null } }[];
@@ -42,21 +43,22 @@ export function readWalletSnapshot(address: string, store = getFillJournal(), no
       }
       const covered = state?.openedAt !== null && state?.openedAt !== undefined && coverage?.status === "covered_interval" && coverage.from_time <= state.openedAt && coverage.through_time >= state.lastTime;
       const aligned = state && !state.reason && state.lastTime <= scope.receivedAt && decimalEqual(state.size, position.szi);
-      const openedAt = aligned && covered && !scope.error && now - scope.receivedAt < 30_000 ? state.openedAt : null;
+      const openedAt = aligned && covered && !scope.error && dataFresh(scope.receivedAt, now, 30_000) ? state.openedAt : null;
       const opening = openedAt === null ? undefined : store.opening(address, position.coin, openedAt);
       const lastEvent = state ? store.queryEvents({ wallet: address, coin: position.coin, from: state.lastTime, to: state.lastTime, limit: 1 }).events[0] : undefined;
-      return [{ coin: displayCoin(position.coin, catalog?.coinNames ?? {}), size: Number(position.szi), entryPx: Number(position.entryPx),
-        positionValue: Number(position.positionValue), unrealizedPnl: Number(position.unrealizedPnl),
-        marginUsed: position.marginUsed === undefined ? undefined : Number(position.marginUsed),
-        leverage: Number(position.leverage?.value ?? 1), liquidationPx: position.liquidationPx ? Number(position.liquidationPx) : null,
+      return [{ coin: displayCoin(position.coin, catalog?.coinNames ?? {}), size: Number(position.szi), entryPx: marketNumber(position.entryPx),
+        positionValue: marketNumber(position.positionValue), unrealizedPnl: marketNumber(position.unrealizedPnl),
+        marginUsed: position.marginUsed === undefined ? undefined : marketNumber(position.marginUsed),
+        leverage: marketNumber(position.leverage?.value), liquidationPx: position.liquidationPx ? marketNumber(position.liquidationPx) : null,
         openedAt, openedAtPrecision: openedAt === null ? "unknown" as const : "reconstructed" as const,
         initialSize: opening ? Math.abs(Number(opening.afterSize)) : null, lastChangedAt: aligned ? state.lastTime : null,
         updatedAt: scope.receivedAt, source: "Hyperliquid · scoped snapshot + fill journal",
         lastAction: aligned && lastEvent?.precision === "exact" ? lastEvent.action : undefined,
-        reason: scope.error ? "Ошибка сверки рынка" : now - scope.receivedAt >= 30_000 ? "Снимок устарел" : !aligned ? "Позиция ещё не согласована с журналом" : !covered ? "История открытия неполная" : undefined }];
+        reason: scope.error ? "Ошибка сверки рынка" : !dataFresh(scope.receivedAt, now, 30_000) ? "Снимок устарел" : !aligned ? "Позиция ещё не согласована с журналом" : !covered ? "История открытия неполная" : undefined }];
     });
   }).filter((position) => position.size);
-  const total = (section: string, field: string) => states.length ? states.reduce((sum, scope) => {
+  const complete = (catalog?.dexNames ?? [""]).every((name: string) => states.some((scope) => scope.scope === name && !scope.error));
+  const total = (section: string, field: string) => states.length && complete ? states.reduce((sum, scope) => {
     const source = section ? scope.payload![section] as Record<string, unknown> | undefined : scope.payload;
     return sum + (validDecimal(source?.[field]) ? Number(source![field]) : NaN);
   }, 0) : NaN;

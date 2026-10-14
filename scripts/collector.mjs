@@ -202,7 +202,7 @@ function handle(message) {
     } else console.error("Subscription error:", message.data);
     return;
   }
-  if (message.channel === "allMids") { mids = { ...mids, ...message.data?.mids }; midsAt = lastReceive; return; }
+  if (message.channel === "allMids") { mids = { ...message.data?.mids }; midsAt = lastReceive; return; }
   const batch = [];
   const initialMarkets = new Set((message.channel === "trades" ? message.data ?? [] : []).map((trade) => trade.coin).filter((coin) => !seenMarkets.has(coin)));
   if (message.channel === "trades") for (const trade of message.data ?? []) for (const [i, address] of (trade.users ?? []).entries()) {

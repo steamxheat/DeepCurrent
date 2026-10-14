@@ -32,4 +32,22 @@ test("streaming only skips REST for scopes that are actually fresh, not merely p
   assert.deepEqual(snapshotRefreshScopes(scopes, ["", "xyz"], true, 201), ["xyz", "spot"]);
   assert.deepEqual(snapshotRefreshScopes(scopes, ["", "xyz"], true, 30_000), ["", "xyz", "spot"]);
   assert.deepEqual(snapshotRefreshScopes(scopes, ["", "xyz"], false, 201), ["", "xyz", "spot"]);
+  assert.deepEqual(snapshotRefreshScopes(scopes, [""], true, 199), ["", "spot"]);
+});
+
+test("an incomplete wallet cannot report partial capital as a complete account", () => {
+  const store = createFillJournal(new DatabaseSync(":memory:"));
+  store.status("catalog", { dexNames: ["", "xyz"] });
+  const payload = { assetPositions: [], marginSummary: { accountValue: "0", totalMarginUsed: "0" }, withdrawable: "0" };
+  store.recordScope({ wallet, scope: "", requestedAt: 100, receivedAt: 200, payload });
+  assert.ok(Number.isNaN(readWalletSnapshot(wallet, store, 201).accountValue));
+  store.recordScope({ wallet, scope: "xyz", requestedAt: 100, receivedAt: 200, payload });
+  assert.equal(readWalletSnapshot(wallet, store, 201).accountValue, 0);
+  assert.ok(readWalletSnapshot(wallet, store, 199).unavailableScopes.includes(""));
+  store.recordScope({ wallet, scope: "", requestedAt: 100, receivedAt: 200, payload: { ...payload, assetPositions: [{ position: { coin: "BTC", szi: "1" } }] } });
+  const missing = store.currentSnapshots(0)[0];
+  assert.ok(Number.isNaN(missing.entryPx)); assert.ok(Number.isNaN(missing.positionValue)); assert.ok(Number.isNaN(missing.unrealizedPnl)); assert.ok(Number.isNaN(missing.leverage));
+  store.recordScope({ wallet, scope: "", requestedAt: 100, receivedAt: Date.now() + 60_000, payload: { ...payload, assetPositions: [{ position: { coin: "BTC", szi: "1" } }] } });
+  assert.equal(store.currentSnapshots(0).length, 0);
+  store.db.close();
 });

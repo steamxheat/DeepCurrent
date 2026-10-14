@@ -1,5 +1,13 @@
 export type RawMeta = { universe?: { name?: string }[] };
 export type RawAssetContext = { dayNtlVlm?: string; markPx?: string; oraclePx?: string; openInterest?: string; funding?: string; prevDayPx?: string };
+import { marketNumber } from "./data-freshness.ts";
+
+export function coinMarketNumbers(market: RawAssetContext, spot?: { price: number; change: number; volume: number }) {
+  const markPx = marketNumber(market.markPx ?? spot?.price), previous = marketNumber(market.prevDayPx);
+  return { markPx, oraclePx: marketNumber(market.oraclePx),
+    change24h: spot?.change ?? (previous > 0 && markPx > 0 ? (markPx - previous) / previous * 100 : NaN),
+    volume24h: marketNumber(market.dayNtlVlm ?? spot?.volume), openInterest: marketNumber(market.openInterest), funding: marketNumber(market.funding) };
+}
 type Info = <T>(body: Record<string, unknown>, revalidate: number) => Promise<T>;
 
 export async function findCoinMarket(coin: string, info: Info) {

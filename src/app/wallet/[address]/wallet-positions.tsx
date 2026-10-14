@@ -8,6 +8,7 @@ import type { Position } from "@/lib/hyperliquid";
 import { useWalletSnapshot } from "./wallet-live-refresh";
 import { walletText } from "@/lib/wallet-language";
 import type { UserLanguage } from "@/lib/user-preferences";
+import { dataFresh, marketNumber } from "@/lib/data-freshness";
 
 const sorts: [PositionSort, string][] = [["time-desc", "Открыты недавно"], ["time-asc", "Открыты давно"], ["duration-desc", "Сначала долгие"], ["duration-asc", "Сначала короткие"], ["notional-desc", "Размер USD: больше"], ["notional-asc", "Размер USD: меньше"], ["pnl-desc", "P&L: больше"], ["pnl-asc", "P&L: меньше"], ["roi-desc", "ROI: больше"], ["roi-asc", "ROI: меньше"], ["entry-desc", "Цена входа: выше"], ["entry-asc", "Цена входа: ниже"]];
 const quantity = (value: number | null | undefined) => value == null || !Number.isFinite(value) ? "—" : Math.abs(value).toLocaleString("en-US", { maximumFractionDigits: 8 });
@@ -16,9 +17,9 @@ function metrics(p: Position, now: number, language: UserLanguage) {
   const symbol = marketIdentity(p.coin).symbol;
   return [[t("Открыта · MSK"), p.openedAt === null ? t("Время неизвестно") : time(p.openedAt, language)], [t("В позиции"), p.openedAt === null ? t("Неполная история") : duration(now - p.openedAt, language)],
     [t("Последнее изменение · MSK"), p.lastChangedAt == null ? t("Неизвестно") : time(p.lastChangedAt, language)], [t("Первое исполнение / сейчас"), `${quantity(p.initialSize)} / ${quantity(p.size)} ${symbol}`],
-    [t("Размер позиции, USD"), money(Math.abs(p.positionValue), true)], [t("Маржа, USD"), money(p.marginUsed ?? null, true)],
-    [t("Средний вход"), price(p.entryPx)], ["Mark Price", price(p.entryPx + p.unrealizedPnl / p.size)], ["P&L", money(p.unrealizedPnl, true)],
-    [t("ROI по марже"), p.marginUsed && p.marginUsed > 0 ? `${(p.unrealizedPnl / p.marginUsed * 100).toFixed(2)}%` : "—"], [t("Плечо"), `${p.leverage}×`], [t("Ликвидация"), price(p.liquidationPx)], [t("Последнее действие"), p.lastAction ?? t("Неизвестно")]];
+    [t("Размер позиции, USD"), money(Math.abs(marketNumber(p.positionValue)), true)], [t("Маржа, USD"), money(p.marginUsed ?? null, true)],
+    [t("Средний вход"), price(p.entryPx)], ["Mark Price", price(marketNumber(p.entryPx) + marketNumber(p.unrealizedPnl) / p.size)], ["P&L", money(p.unrealizedPnl, true)],
+    [t("ROI по марже"), p.marginUsed && p.marginUsed > 0 && Number.isFinite(p.unrealizedPnl) ? `${(p.unrealizedPnl / p.marginUsed * 100).toFixed(2)}%` : "—"], [t("Плечо"), Number.isFinite(p.leverage) ? `${p.leverage}×` : "—"], [t("Ликвидация"), price(p.liquidationPx)], [t("Последнее действие"), p.lastAction ?? t("Неизвестно")]];
 }
 function Evidence({ position: p }: { position: Position }) {
   const { language } = useWalletSnapshot(); const t = (value: string) => walletText(language, value);
@@ -27,7 +28,7 @@ function Evidence({ position: p }: { position: Position }) {
 export function WalletPositions({ initialSort }: { initialSort: PositionSort }) {
   const { snapshot, now, language, healthy } = useWalletSnapshot(); const t = (value: string) => walletText(language, value); const [sort, setSort] = useState(initialSort);
   const [filters, setFilters] = useState({ coin: "", side: "all", source: "all", action: "all", exactOnly: false });
-  const positions = sortPositions(filterPositions(snapshot.positions, filters), sort); const stale = snapshot.unavailableScopes.length > 0;
+  const positions = sortPositions(filterPositions(snapshot.positions, filters), sort); const stale = snapshot.unavailableScopes.length > 0 || !dataFresh(snapshot.updatedAt, now, 30_000);
   return <section id="open-positions" className="mt-4 scroll-mt-20 overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--panel)]">
     <header className="border-b border-[var(--line)] p-4"><h2 className="font-semibold">{t("Открытые позиции")}</h2><p className="mt-1 text-xs text-[var(--muted)]">{positions.length} {t("из")} {snapshot.positions.length} · {!healthy ? t("Сборщик не подтверждён · показан сохранённый снимок") : stale ? t("есть устаревшие данные") : t("сверка каждые 10 секунд")} · {t("обновлено")} {snapshot.updatedAt ? time(snapshot.updatedAt, language) : t("ожидается")}</p></header>
     <div className="grid grid-cols-2 gap-2 border-b border-[var(--line)] p-3 lg:grid-cols-6">

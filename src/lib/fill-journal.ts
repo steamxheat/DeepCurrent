@@ -4,6 +4,7 @@ import { getDatabase, transaction } from "./database.ts";
 import { decimalEqual, decimalSign, fillTransition, orderFillChain, reducePosition, validDecimal, type PositionState } from "./position-reducer.ts";
 import { closedTrades, type ClosedTrade, type Fill } from "./stats.ts";
 import type { FillEvidence } from "./hyperliquid";
+import { marketNumber } from "./data-freshness.ts";
 
 export type JournalSource = "market" | "userFills";
 export type IngestMode = "live" | "history" | "shadow";
@@ -340,14 +341,14 @@ export function createFillJournal(db: DatabaseSync) {
   }
   function currentSnapshots(since = Date.now() - 900_000) {
     type SnapshotPosition = { coin: string; szi: string; entryPx?: string; positionValue?: string; unrealizedPnl?: string; leverage?: { value: number }; liquidationPx?: string; marginUsed?: string };
-    return (db.prepare("SELECT wallet,scope,payload,received_at,last_error FROM scope_snapshots WHERE received_at>=? AND payload IS NOT NULL AND last_error IS NULL AND scope!='spot'").all(since) as { wallet: string; scope: string; payload: string; received_at: number; last_error: string | null }[])
+    return (db.prepare("SELECT wallet,scope,payload,received_at,last_error FROM scope_snapshots WHERE received_at>=? AND received_at<=? AND payload IS NOT NULL AND last_error IS NULL AND scope!='spot'").all(since, Date.now()) as { wallet: string; scope: string; payload: string; received_at: number; last_error: string | null }[])
       .flatMap((row) => ((JSON.parse(row.payload).assetPositions ?? []) as { position: SnapshotPosition }[]).flatMap(({ position: p }) => {
         const state = getState(row.wallet, p.coin);
         if (!Number(p.szi) || state && state.lastTime > row.received_at && !state.reason && !decimalEqual(state.size, p.szi)) return [];
         return [{
-        wallet: row.wallet, coin: p.coin, capturedAt: row.received_at, size: Number(p.szi), entryPx: Number(p.entryPx ?? 0),
-        positionValue: Number(p.positionValue ?? 0), unrealizedPnl: Number(p.unrealizedPnl ?? 0), leverage: Number(p.leverage?.value ?? 1),
-        liquidationPx: p.liquidationPx ? Number(p.liquidationPx) : null, marginUsed: Number(p.marginUsed ?? 0),
+        wallet: row.wallet, coin: p.coin, capturedAt: row.received_at, size: Number(p.szi), entryPx: marketNumber(p.entryPx),
+        positionValue: marketNumber(p.positionValue), unrealizedPnl: marketNumber(p.unrealizedPnl), leverage: marketNumber(p.leverage?.value),
+        liquidationPx: p.liquidationPx ? marketNumber(p.liquidationPx) : null, marginUsed: marketNumber(p.marginUsed),
         source: row.last_error ? "Hyperliquid snapshot · stale/error" : "Hyperliquid scoped snapshot",
       }]; }));
   }

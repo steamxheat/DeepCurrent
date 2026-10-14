@@ -6,6 +6,7 @@ import type { WalletSnapshot } from "@/lib/wallet-snapshot";
 import { walletMoney, walletTime } from "@/lib/wallet-format";
 import type { UserLanguage } from "@/lib/user-preferences";
 import { walletText } from "@/lib/wallet-language";
+import { dataFresh, marketNumber } from "@/lib/data-freshness";
 
 const LiveWallet = createContext<{ snapshot: WalletSnapshot; healthy: boolean; now: number; language: UserLanguage } | null>(null);
 export function useWalletSnapshot() {
@@ -37,7 +38,7 @@ export function WalletLiveProvider({ initial, children, language = "ru" }: { ini
     document.addEventListener("visibilitychange", update);
     return () => { stopped = true; abort.abort(); window.clearInterval(clock); window.clearInterval(fallback); document.removeEventListener("visibilitychange", update); };
   }, [initial.address]);
-  return <LiveWallet.Provider value={{ snapshot, healthy, now, language }}>{children}</LiveWallet.Provider>;
+  return <LiveWallet.Provider value={{ snapshot, healthy: healthy && dataFresh(snapshot.updatedAt, now, 30_000) && !snapshot.unavailableScopes.length, now, language }}>{children}</LiveWallet.Provider>;
 }
 
 export function WalletLiveRefresh() {
@@ -47,17 +48,19 @@ export function WalletLiveRefresh() {
 }
 
 export function WalletLiveValue({ field }: { field: "accountValue" | "positionValue" | "totalMarginUsed" | "withdrawable" | "openPnl" | "risk" | "bias" | "updatedAt" | "source" }) {
-  const { snapshot, language } = useWalletSnapshot(); const t = (value: string) => walletText(language, value);
-  if (field === "source") return <>{snapshot.pending ? t("Ожидаем снимок сервера") : snapshot.unavailableScopes.length ? t("Серверный журнал · часть рынков устарела") : t("Серверный журнал Hyperliquid")}</>;
-  if (field === "updatedAt") return <>{snapshot.updatedAt ? `${walletTime(snapshot.updatedAt, language)} MSK${snapshot.unavailableScopes.length ? ` · ${t("часть рынков устарела")}` : ` · ${t("серверный снимок")}`}` : t("Ожидаем первый снимок")}</>;
-  if (snapshot.pending) return <>—</>;
-  const value = snapshot.positions.reduce((sum, position) => sum + Math.abs(position.positionValue), 0);
+  const { snapshot, now, language } = useWalletSnapshot(); const t = (value: string) => walletText(language, value);
+  const stale = !dataFresh(snapshot.updatedAt, now, 30_000) || snapshot.unavailableScopes.length > 0;
+  if (field === "source") return <>{snapshot.pending ? t("Ожидаем снимок сервера") : stale ? t("Серверный журнал · часть рынков устарела") : t("Серверный журнал Hyperliquid")}</>;
+  if (field === "updatedAt") return <>{snapshot.updatedAt ? `${walletTime(snapshot.updatedAt, language)} MSK${stale ? ` · ${t("часть рынков устарела")}` : ` · ${t("серверный снимок")}`}` : t("Ожидаем первый снимок")}</>;
+  if (snapshot.pending || snapshot.unavailableScopes.some((scope) => scope !== "spot")) return <>—</>;
+  const value = snapshot.positions.reduce((sum, position) => sum + Math.abs(marketNumber(position.positionValue)), 0);
   if (field === "bias") {
-    const long = snapshot.positions.filter((position) => position.size > 0).reduce((sum, position) => sum + Math.abs(position.positionValue), 0);
+    if (!Number.isFinite(value)) return <>—</>;
+    const long = snapshot.positions.filter((position) => position.size > 0).reduce((sum, position) => sum + Math.abs(marketNumber(position.positionValue)), 0);
     return <>{value ? `${long >= value / 2 ? "Long" : "Short"} ${Math.round(Math.max(long, value - long) / value * 100)}%` : t("Нет позиций")}</>;
   }
-  if (field === "risk") return <>{snapshot.accountValue ? `${(snapshot.totalMarginUsed / snapshot.accountValue * 100).toFixed(1)}%` : "—"}</>;
-  const amount = field === "positionValue" ? value : field === "openPnl" ? snapshot.positions.reduce((sum, position) => sum + position.unrealizedPnl, 0) : snapshot[field];
+  if (field === "risk") return <>{Number.isFinite(snapshot.accountValue) && snapshot.accountValue > 0 && Number.isFinite(snapshot.totalMarginUsed) ? `${(snapshot.totalMarginUsed / snapshot.accountValue * 100).toFixed(1)}%` : "—"}</>;
+  const amount = field === "positionValue" ? value : field === "openPnl" ? snapshot.positions.reduce((sum, position) => sum + marketNumber(position.unrealizedPnl), 0) : snapshot[field];
   return <span className={field === "openPnl" ? amount >= 0 ? "text-[var(--cyan)]" : "text-[var(--loss)]" : undefined}>{walletMoney(amount, true)}</span>;
 }
 

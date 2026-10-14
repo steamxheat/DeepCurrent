@@ -1,4 +1,5 @@
 import type { JournalEvent, PositionSnapshot } from "./event-store.ts";
+import { dataFresh } from "./data-freshness.ts";
 
 export type FlowChange = { long: number; short: number; net: number; wallets: number };
 export type CoinParticipant = {
@@ -32,7 +33,7 @@ export function coinFlowChange(events: JournalEvent[], now: number, duration: nu
 export function coinParticipants(events: JournalEvent[], snapshots: PositionSnapshot[], now: number, duration = 86_400_000): CoinParticipant[] {
   const rows = new Map<string, CoinParticipant>();
   for (const snapshot of snapshots) {
-    if (snapshot.size === 0) continue;
+    if (snapshot.size === 0 || !dataFresh(snapshot.capturedAt, now, 30_000)) continue;
     const direction = snapshot.size > 0 ? "LONG" : "SHORT";
     rows.set(snapshot.wallet, { wallet: snapshot.wallet, direction, notional: Math.abs(snapshot.positionValue), lastTime: snapshot.capturedAt, events: 0, kind: "position", unrealizedPnl: snapshot.unrealizedPnl });
   }
