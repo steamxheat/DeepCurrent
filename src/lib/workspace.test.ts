@@ -28,3 +28,11 @@ test("a public buy is not proof of LONG; lifecycle and oldest/price filters agre
   assert.equal(filterActivity(rows, { ...defaultActivityFilters, action: "ADD" }, new Set()).length, 1);
   assert.equal(filterActivity(rows, { ...defaultActivityFilters, sort: "oldest" }, new Set())[0].time, 100);
 });
+
+test("unknown PnL cannot pass winners/losers and missing execution evidence is not exact", () => {
+  for (const dayPnl of [NaN, null as unknown as number]) for (const performance of ["winners", "losers"] as const)
+    assert.deepEqual(filterWallets([wallet({ dayPnl })], { ...defaultWalletFilters, performance }, new Set(), "dayPnl", "desc"), []);
+  assert.deepEqual(filterWallets([wallet({ dayVolume: NaN })], defaultWalletFilters, new Set(), "dayVolume", "asc"), []);
+  const rows = [fill(), fill({ startPosition: undefined }), fill({ precision: "observed" }), fill({ px: "" })];
+  assert.equal(filterActivity(rows, { ...defaultActivityFilters, source: "exact" }, new Set()).length, 1);
+});

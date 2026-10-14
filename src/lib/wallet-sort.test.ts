@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { filterPositions, sortClosedTrades, sortFills, sortPositions } from "./wallet-sort.ts";
+import type { Position } from "./hyperliquid";
 
 test("position time sorting keeps unknown opening times last", () => {
   const rows = [
@@ -37,4 +38,19 @@ test("wallet rows sort by financial values and durations", () => {
 test("unknown completed duration is last in both sort directions", () => {
   const rows = [{ coin: "BTC", direction: "LONG" as const, openedAt: 1, closedAt: 100, entryPx: 1, exitPx: 1, size: 1, netPnl: 0 }, { coin: "ETH", direction: "LONG" as const, openedAt: null, closedAt: 100, entryPx: null, exitPx: 1, size: 1, netPnl: 0 }];
   assert.equal(sortClosedTrades(rows, "duration-asc")[1].coin, "ETH"); assert.equal(sortClosedTrades(rows, "duration-desc")[1].coin, "ETH");
+});
+
+test("unknown financial values stay last before and after JSON serialization in every direction", () => {
+  const base: Position = { coin: "A", size: 1, entryPx: 2, positionValue: 2, unrealizedPnl: -2, marginUsed: 10, leverage: 1, liquidationPx: null, openedAt: 100 };
+  const rows = [{ ...base, coin: "UNKNOWN", entryPx: NaN, positionValue: NaN, unrealizedPnl: NaN, openedAt: NaN }, base, { ...base, coin: "B", entryPx: 3, positionValue: 3, unrealizedPnl: 2 }];
+  for (const dataset of [rows, JSON.parse(JSON.stringify(rows))]) for (const field of ["time", "duration", "entry", "notional", "pnl", "roi"] as const) for (const order of ["asc", "desc"] as const) {
+    assert.equal(sortPositions(dataset, `${field}-${order}`).at(-1)?.coin, "UNKNOWN", `${field}-${order}`);
+    assert.equal(filterPositions(dataset, { coin: "", side: "all", exactOnly: true }).length, 2);
+  }
+});
+
+test("explicit unknown precision cannot pass the proven-opening filter", () => {
+  const row: Position = { coin: "BTC", size: -1, entryPx: 1, positionValue: 1, unrealizedPnl: 0, leverage: 1, liquidationPx: null, openedAt: 100, openedAtPrecision: "unknown" };
+  assert.deepEqual(filterPositions([row], { coin: " btc ", side: "SHORT", exactOnly: true }), []);
+  assert.equal(filterPositions([row], { coin: " btc ", side: "SHORT", exactOnly: false }).length, 1);
 });

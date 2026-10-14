@@ -1,5 +1,6 @@
 import type { PulseFill, WalletRow } from "./hyperliquid";
 import { activityKind } from "./live.ts";
+import { marketNumber } from "./data-freshness.ts";
 
 export type WalletSort = "rank" | "accountValue" | "dayPnl" | "monthPnl" | "monthRoi" | "dayVolume";
 export type WalletFilters = {
@@ -46,16 +47,20 @@ export function filterWallets(wallets: WalletRow[], filters: WalletFilters, favo
   const query = filters.query.trim().toLowerCase();
   const rows = wallets.filter((wallet) => {
     if (query && !`${wallet.name} ${wallet.address}`.toLowerCase().includes(query)) return false;
-    if (filters.performance === "winners" && wallet.dayPnl <= 0) return false;
-    if (filters.performance === "losers" && wallet.dayPnl >= 0) return false;
-    if (wallet.accountValue < filters.minAccount || wallet.monthPnl < filters.minMonthPnl || wallet.monthRoi < filters.minRoi || wallet.dayVolume < filters.minVolume) return false;
+    if (filters.performance === "winners" && !(wallet.dayPnl > 0)) return false;
+    if (filters.performance === "losers" && !(wallet.dayPnl < 0)) return false;
+    if (![wallet.accountValue, wallet.monthPnl, wallet.monthRoi, wallet.dayVolume].every(Number.isFinite) || !(wallet.accountValue >= filters.minAccount) || !(wallet.monthPnl >= filters.minMonthPnl) || !(wallet.monthRoi >= filters.minRoi) || !(wallet.dayVolume >= filters.minVolume)) return false;
     if (filters.namedOnly && wallet.name.startsWith("Wallet ")) return false;
     if (filters.favoritesOnly && !favorites.has(wallet.address)) return false;
     if (filters.riskFreeOnly && walletRiskFlags(wallet).length) return false;
     return true;
   });
   const sign = direction === "asc" ? 1 : -1;
-  return rows.sort((a, b) => sign * (sort === "rank" ? a.rank - b.rank : Number(a[sort] ?? -1) - Number(b[sort] ?? -1)));
+  return rows.sort((a, b) => {
+    if (!Number.isFinite(a[sort])) return !Number.isFinite(b[sort]) ? 0 : 1;
+    if (!Number.isFinite(b[sort])) return -1;
+    return sign * (a[sort] - b[sort]);
+  });
 }
 
 export function walletInsights(wallets: WalletRow[]) {
@@ -77,14 +82,14 @@ export function filterActivity(fills: PulseFill[], filters: ActivityFilters, fav
   const query = filters.query.trim().toLowerCase();
   return fills.filter((fill) => {
     const activity = activityKind(fill);
-    const notional = Number(fill.px) * Number(fill.sz);
+    const notional = marketNumber(fill.px) * marketNumber(fill.sz);
     if (query && !`${fill.coin} ${fill.walletName} ${fill.wallet}`.toLowerCase().includes(query)) return false;
     if (filters.coin !== "all" && fill.coin !== filters.coin) return false;
     if (filters.action === "long" && activity.direction !== "LONG") return false;
     if (filters.action === "short" && activity.direction !== "SHORT") return false;
     if (filters.action === "reduced" && !["REDUCE", "CLOSE"].includes(activity.label)) return false;
     if (/^[A-Z]+$/.test(filters.action) && filters.action !== activity.label) return false;
-    if (filters.source === "exact" && fill.source === "market") return false;
+    if (filters.source === "exact" && (!activity.exact || fill.precision !== undefined && fill.precision !== "exact")) return false;
     if (filters.source === "market" && fill.source !== "market") return false;
     if (filters.favoritesOnly && !favorites.has(fill.wallet)) return false;
     return notional >= filters.minNotional;
