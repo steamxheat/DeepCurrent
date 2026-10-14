@@ -1,4 +1,4 @@
-type Task = { priority: number; weight: number; run: () => Promise<unknown>; resolve: (value: unknown) => void; reject: (error: unknown) => void };
+type Task = { priority: number; weight: number; wallet?: string; run: () => Promise<unknown>; resolve: (value: unknown) => void; reject: (error: unknown) => void };
 
 export function createInfoClient(fetcher: typeof fetch = fetch, observe?: (details: { operation: string; wallet?: string; code?: number; durationMs: number; attempt: number; priority: number; error?: string }) => void) {
   let diagnosticFailureReported = false;
@@ -27,7 +27,7 @@ export function createInfoClient(fetcher: typeof fetch = fetch, observe?: (detai
     if (queue.length >= 200) throw new Error("Collector request queue is full");
     let retry = false;
     try { return await new Promise<T>((resolve, reject) => {
-      queue.push({ priority, weight, resolve: resolve as (value: unknown) => void, reject, run: async () => {
+      queue.push({ priority, weight, wallet: typeof body.user === "string" ? body.user.toLowerCase() : undefined, resolve: resolve as (value: unknown) => void, reject, run: async () => {
           const started = Date.now(); let code: number | undefined;
           try {
           const response = await fetcher("https://api.hyperliquid.xyz/info", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(20_000) });
@@ -55,5 +55,6 @@ export function createInfoClient(fetcher: typeof fetch = fetch, observe?: (detai
     }
     throw new Error("Hyperliquid retries exhausted");
   }
-  return { post, pending: () => queue.length, active: () => active, budget: () => ({ tokens, cooldownUntil, weightPerMinute: 600 }) };
+  return { post, prioritizeWallet: (wallet: string) => { for (const task of queue) if (task.wallet === wallet.toLowerCase() && task.priority > 0) task.priority = 0; pump(); },
+    pending: () => queue.length, active: () => active, budget: () => ({ tokens, cooldownUntil, weightPerMinute: 600 }) };
 }

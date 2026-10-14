@@ -31,7 +31,8 @@ if (existsSync(filename)) {
 }
 chmodSync(filename, 0o600);
 webpush.setVapidDetails("https://mac-mini.tail50f09f.ts.net", keys.publicKey, keys.privateKey);
-for (const name of names) execFileSync("pm2", ["restart", name, "--update-env"], { env: { ...process.env,
+const restart = selected.filter((row) => row.pm2_env.VAPID_PUBLIC_KEY !== keys.publicKey || row.pm2_env.VAPID_PRIVATE_KEY !== keys.privateKey || row.pm2_env.VAPID_SUBJECT !== "https://mac-mini.tail50f09f.ts.net").map((row) => row.name);
+for (const name of restart) execFileSync("pm2", ["restart", name, "--update-env"], { env: { ...process.env,
   VAPID_PUBLIC_KEY: keys.publicKey, VAPID_PRIVATE_KEY: keys.privateKey, VAPID_SUBJECT: "https://mac-mini.tail50f09f.ts.net", NODE_USE_ENV_PROXY: "1" }, stdio: "pipe" });
-execFileSync("pm2", ["save"], { stdio: "pipe" });
-console.log(JSON.stringify({ configured: true, keyBackup: filename, publicKeyFingerprint: createHash("sha256").update(keys.publicKey).digest("hex").slice(0, 16), restarted: names, notificationsMode: "shadow", envFileChanged: false, deviceDeliveryChecked: false }));
+if (restart.length) execFileSync("pm2", ["save"], { stdio: "pipe" });
+console.log(JSON.stringify({ configured: true, keyBackup: filename, publicKeyFingerprint: createHash("sha256").update(keys.publicKey).digest("hex").slice(0, 16), restarted: restart, notificationsMode: "shadow", envFileChanged: false, deviceDeliveryChecked: false }));

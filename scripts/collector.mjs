@@ -39,7 +39,7 @@ const seenMarkets = new Set();
 const confirmations = createConfirmationQueue(); let confirmationRequests = 0; let confirmationFailures = 0;
 let fillsChanged = 0; let fillsRepeated = 0; let fillsRejected = 0;
 const pendingSubscriptions = new Map(); const takeSocketMessage = createSocketBudget();
-const activeWork = new Set(); const snapshotDue = new Map(); const resourceDue = new Map(); const historyDue = new Map(); const resourcesInFlight = new Set();
+const activeWork = new Set(); const snapshotDue = new Map(); const resourceDue = new Map(); const historyDue = new Map(); const resourcesInFlight = new Set(); const historyInFlight = new Set();
 const subscriptions = new Map(); const timers = []; const limit = Math.min(1000, Math.max(10, Number(process.env.TRACKED_WALLETS) || 1000));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const short = (address) => `${address.slice(0, 6)}…${address.slice(-4)}`;
@@ -136,6 +136,7 @@ function flushSubscriptions() {
   }
 }
 function selectUsers() {
+  for (const wallet of journal.activeWallets()) client.prioritizeWallet(wallet);
   watchedWallets = new Set(getWatchedWallets());
   for (const wallet of watchedWallets) if (validWalletAddress(wallet) && !targets.has(wallet)) targets.set(wallet, { address: wallet, name: short(wallet), pnl: 0 });
   const selected = selectStreamWallets({ active: journal.activeWallets().filter(validWalletAddress), favorites: [...watchedWallets].filter(validWalletAddress),
@@ -236,13 +237,15 @@ async function recover(wallet, priority) {
   health.event("recovery_ok", { wallet, from, through: end, complete: result.complete, count: result.fills.length, durationMs: Date.now() - started });
   for (const gap of result.gaps) health.event("recovery_failed", { wallet, from: gap.from, through: gap.to, error: gap.reason, stage: "incomplete_interval" });
 }
-async function historyLoop() {
+async function historyLoop(foreground = false) {
   while (running) {
-    const candidates = [...new Set([...journal.activeWallets(), ...subscribedUsers, ...watchedWallets, ...recoverQueue])];
-    const wallet = candidates.find((address) => Date.now() >= (historyDue.get(address) ?? 0));
-    if (!wallet) { await sleep(500); continue; } recoverQueue.delete(wallet);
-    try { await recover(wallet, journal.activeWallets().includes(wallet) ? 2 : 4); historyDue.set(wallet, Date.now() + 300_000); }
+    const active = new Set(journal.activeWallets());
+    const candidates = foreground ? [...active] : [...new Set([...subscribedUsers, ...watchedWallets, ...recoverQueue])].filter((wallet) => !active.has(wallet));
+    const wallet = candidates.find((address) => !historyInFlight.has(address) && Date.now() >= (historyDue.get(address) ?? 0));
+    if (!wallet) { await sleep(500); continue; } recoverQueue.delete(wallet); historyInFlight.add(wallet);
+    try { await recover(wallet, foreground ? 0 : 4); historyDue.set(wallet, Date.now() + 300_000); }
     catch (error) { health.event("recovery_failed", { wallet, error: diagnosticError(error) }); recoverQueue.add(wallet); const covered = journal.getCoverage(wallet); journal.coverage(wallet, "fills", covered?.from_time ?? Date.now(), covered?.through_time ?? Date.now(), "gap", error.message); historyDue.set(wallet, Date.now() + 30_000); }
+    finally { historyInFlight.delete(wallet); }
   }
 }
 async function confirmationLoop() {
@@ -395,7 +398,7 @@ for (const coin of markets) subscribe({ type: "trades", coin }); subscribe({ typ
 selectUsers(); connect();
 timers.push(setInterval(heartbeat, 1000), setInterval(() => { try { journal.project(100, 10); } catch (error) { health.event("projection_failed", { error: diagnosticError(error) }); console.error("Projection:", error.message); } }, 200), setInterval(selectUsers, 10_000), setInterval(() => refreshTargets().catch((error) => { health.event("targets_failed", { error: diagnosticError(error) }); console.error("Targets:", error.message); }), 180_000), setInterval(() => socket?.readyState === WebSocket.OPEN && socket.send(JSON.stringify({ method: "ping" })), 30_000));
 timers.push(setInterval(flushSubscriptions, 100));
-historyLoop().catch((error) => fatal("history_loop", error));
+for (const foreground of [true, false]) historyLoop(foreground).catch((error) => fatal(foreground ? "foreground_history" : "history_loop", error));
 for (const foreground of [true, false]) snapshotLoop(foreground).catch((error) => fatal(foreground ? "foreground_snapshot" : "background_snapshot", error));
 resourcesLoop().catch((error) => fatal("resources_loop", error)); deliverLoop().catch((error) => fatal("delivery_loop", error));
 for (const event of journal.events(Date.now() - 60_000, 10_000)) if (event.source === "market" && targets.has(event.wallet)) confirmations.enqueue(event.wallet, event.time);

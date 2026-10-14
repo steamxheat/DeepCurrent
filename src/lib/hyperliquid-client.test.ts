@@ -36,6 +36,19 @@ test("cheap foreground state cannot starve behind a continuous confirmation queu
   context.mock.timers.tick(2000); await waiting;
 });
 
+test("viewing a wallet promotes its already queued work without dropping the reserved response weight", async (context) => {
+  context.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  const types: string[] = []; const wallet = `0x${"a".repeat(40)}`;
+  const client = createInfoClient(async (_url, options) => { types.push(JSON.parse(String(options?.body)).type); return Response.json([]); });
+  for (let index = 0; index < 7; index++) await client.post({ type: "userFillsByTime" }, 0);
+  const background = client.post({ type: "userFills", user: wallet }, 4);
+  const confirmation = client.post({ type: "userFillsByTime" }, 0);
+  client.prioritizeWallet(wallet.toUpperCase());
+  assert.equal(types.length, 7); // Retain the 120-weight reservation until the budget actually refills.
+  context.mock.timers.tick(11000); await background; await confirmation;
+  assert.deepEqual(types.slice(7), ["userFills", "userFillsByTime"]);
+});
+
 test("429 releases workers and applies one shared cooldown before retry", async (context) => {
   context.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
   const calls: number[] = [];
