@@ -49,11 +49,14 @@ try {
       const events = (await response.json()).events; const source = new Map(fills.map((fill) => [`${fill.time}:${fill.tid}`, fill])); let compared = 0;
       for (const event of events) {
         const original = source.get(`${event.time}:${event.tid}`); if (!original) continue;
-        for (const field of ["px", "sz", "fee", "closedPnl", "startPosition"]) assert.ok(decimalEqual(event[field], original[field]), `Feed differs from API: ${field}`);
+        for (const field of ["px", "sz", "fee", "closedPnl", "startPosition"]) {
+          if (event[field] === undefined || original[field] === undefined) assert.equal(event[field], original[field], `Feed differs from API: ${field}`);
+          else assert.ok(decimalEqual(event[field], original[field]), `Feed differs from API: ${field}`);
+        }
         assert.equal(event.side, original.side); assert.equal(event.hash, original.hash);
         const transition = fillTransition(original); assert.ok(transition); assert.equal(event.action, transition.action); assert.equal(event.direction, transition.direction); compared++;
       }
-      feed = { returned: events.length, compared, outsideApiRetention: events.length - compared, source: "Production feed vs API executions; current-position status is not an atomic exchange snapshot" };
+      feed = { returned: events.length, compared, notInFetchedSample: events.length - compared, source: "Production feed vs API executions; samples are non-atomic and API history is bounded" };
     }
     results.push({ wallet, fills: fills.length, feed, scopes: outcomes, positions: snapshot.positions.length, verifiedOpeningTimes: snapshot.positions.filter((p) => p.openedAt !== null).length,
       unknownOpeningTimes: snapshot.positions.filter((p) => p.openedAt === null).length, completedPositions: closed.length, unknownCompletedOpenings: closed.filter((p) => p.openedAt === null).length,
