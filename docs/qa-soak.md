@@ -16,6 +16,8 @@ Not covered: touch/visual usability, real-device installation/permission prompts
 
 ## Launch verified — 14 October 2026
 
-Source/build: `665b509`, pushed and installed after backup and all server checks. Local short soak: 5,214 checks, all 100 sessions active, 49–54 actions each, zero failures. Server short soak: 4,492 checks, zero failures. Night run: `/home/admin1337/Services/DeepCurrent/backups/qa-soak-1791938276515`, worker PID 77365, eight hours, 30-second rounds. After launch: 100/100 sessions active, at least two actions each, zero errors; production guard 44 ms; fixture listens only on 127.0.0.1:3002. This records startup, not a completed overnight result.
+Source/build: `cceebc8`, pushed and installed after backup and all server checks (132 tests, lint, live API, build and 36 integration checks). Local short soak: 5,214 checks, all 100 sessions active, 49–54 actions each, zero failures. Server short soak: 4,492 checks, zero failures. The first night run was deliberately stopped to strengthen build/cache isolation; its logs remain preserved.
+
+Current night run: `/home/admin1337/Services/DeepCurrent/backups/qa-soak-1791938545579`, worker PID 78064, eight hours, 30-second rounds. Verified startup: 100/100 sessions active, zero errors, production guard 103 ms, private copied build (not a symlink), fixture listens only on 127.0.0.1:3002. This records startup, not a completed overnight result.
 
 An hourly thread follow-up named “Deep Current: ночной QA и исправления” was created to inspect this run, investigate failures, perform verified fixes and stop after reporting completion. Its local scheduled reviews require the desktop computer and app to remain running; server-side simulation does not depend on the app.
