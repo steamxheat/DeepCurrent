@@ -23,6 +23,8 @@ Telegram Mini App для просмотра публичной статисти�
 
 Подтверждённое ограничение бюджета и новая приоритетная догрузка fills: [только бесплатные источники](docs/free-data-mode.md). Быстрый market BUY/SELL публикуется отдельно от подтверждённого Open/Close; очередь подтверждений видна в `check:journal`.
 
+Для ограниченного пилота Dwellir Hyperliquid Index задай `DC_ARCHIVE_INFO_URL` полным HTTPS `/info` endpoint и перечисли 20–50 публичных адресов в `DC_ARCHIVE_WALLETS`. Только `userFills` этих адресов пойдут через Dwellir; состояния аккаунтов останутся на официальном API, остальные кошельки и ошибки Dwellir автоматически используют официальный источник. Не добавляй URL с ключом в Git.
+
 ```bash
 npm install
 npm run dev

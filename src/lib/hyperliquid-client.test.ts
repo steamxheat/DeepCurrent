@@ -131,3 +131,39 @@ test("a failed diagnostic writer does not turn a successful request into a retry
   const client = createInfoClient(async () => { calls++; return Response.json([]); }, () => { throw new Error("disk full"); });
   assert.deepEqual(await client.post({ type: "meta" }, 0), []); assert.equal(calls, 1);
 });
+
+test("Dwellir serves fill history while account state stays on the official API", async () => {
+  const urls: string[] = [];
+  const client = createInfoClient(async (url) => { urls.push(String(url)); return Response.json([]); }, undefined,
+    { archiveInfoUrl: "https://api-hyperliquid-index.n.dwellir.com/test-key/info", archiveWallets: [`0x${"a".repeat(40)}`] });
+  await client.post({ type: "userFills", user: `0x${"a".repeat(40)}` }, 0);
+  await client.post({ type: "userFillsByTime", user: `0x${"a".repeat(40)}`, startTime: 1 }, 0);
+  await client.post({ type: "clearinghouseState", user: `0x${"a".repeat(40)}` }, 0);
+  assert.deepEqual(urls, [
+    "https://api-hyperliquid-index.n.dwellir.com/test-key/info",
+    "https://api-hyperliquid-index.n.dwellir.com/test-key/info",
+    "https://api.hyperliquid.xyz/info",
+  ]);
+});
+
+test("Dwellir pilot only handles allowlisted wallets", async () => {
+  const urls: string[] = [], selected = `0x${"a".repeat(40)}`, other = `0x${"b".repeat(40)}`;
+  const client = createInfoClient(async (url) => { urls.push(String(url)); return Response.json([]); }, undefined,
+    { archiveInfoUrl: "https://api-hyperliquid-index.n.dwellir.com/test-key/info", archiveWallets: [selected.toUpperCase()] });
+  await client.post({ type: "userFillsByTime", user: selected }, 0);
+  await client.post({ type: "userFillsByTime", user: other }, 0);
+  assert.deepEqual(urls, ["https://api-hyperliquid-index.n.dwellir.com/test-key/info", "https://api.hyperliquid.xyz/info"]);
+});
+
+test("a failed Dwellir request falls back to the official API", async () => {
+  const urls: string[] = [], wallet = `0x${"a".repeat(40)}`;
+  const client = createInfoClient(async (url) => { urls.push(String(url)); return urls.length === 1 ? new Response(null, { status: 400 }) : Response.json([{ tid: 1 }]); }, undefined,
+    { archiveInfoUrl: "https://api-hyperliquid-index.n.dwellir.com/test-key/info", archiveWallets: [wallet] });
+  assert.deepEqual(await client.post({ type: "userFillsByTime", user: wallet }, 0), [{ tid: 1 }]);
+  assert.deepEqual(urls, ["https://api-hyperliquid-index.n.dwellir.com/test-key/info", "https://api.hyperliquid.xyz/info"]);
+});
+
+test("Dwellir history URL is restricted to the expected HTTPS endpoint", () => {
+  assert.throws(() => createInfoClient(fetch, undefined, { archiveInfoUrl: "https://example.com/key/info" }), /Invalid Dwellir/);
+  assert.throws(() => createInfoClient(fetch, undefined, { archiveInfoUrl: "https://api-hyperliquid-index.n.dwellir.com/key/info?leak=1" }), /Invalid Dwellir/);
+});

@@ -1,6 +1,16 @@
 type Task = { priority: number; basePriority: number; weight: number; wallet?: string; recovery: boolean; queuedAt: number; run: () => Promise<unknown>; resolve: (value: unknown) => void; reject: (error: unknown) => void };
 
-export function createInfoClient(fetcher: typeof fetch = fetch, observe?: (details: { operation: string; wallet?: string; code?: number; durationMs: number; attempt: number; priority: number; error?: string }) => void) {
+export function createInfoClient(fetcher: typeof fetch = fetch, observe?: (details: { operation: string; wallet?: string; code?: number; durationMs: number; attempt: number; priority: number; error?: string }) => void,
+  options: { archiveInfoUrl?: string; archiveWallets?: Iterable<string> } = {}) {
+  const archiveInfoUrl = options.archiveInfoUrl ?? process.env.DC_ARCHIVE_INFO_URL;
+  const configuredArchiveWallets = options.archiveWallets ?? process.env.DC_ARCHIVE_WALLETS?.split(",");
+  const archiveWallets = new Set([...(configuredArchiveWallets ?? [])].map(wallet => wallet.trim().toLowerCase()).filter(Boolean));
+  if (archiveInfoUrl) {
+    const url = new URL(archiveInfoUrl);
+    if (url.protocol !== "https:" || url.hostname !== "api-hyperliquid-index.n.dwellir.com" || !url.pathname.endsWith("/info") || url.username || url.password || url.search || url.hash) {
+      throw new Error("Invalid Dwellir Hyperliquid Index URL");
+    }
+  }
   let diagnosticFailureReported = false;
   const report: NonNullable<typeof observe> = (details) => {
     try { observe?.(details); } catch { if (!diagnosticFailureReported) { console.error("Collector HTTP diagnostics unavailable; requests continue"); diagnosticFailureReported = true; } }
@@ -41,19 +51,21 @@ export function createInfoClient(fetcher: typeof fetch = fetch, observe?: (detai
       if (tokens < needed || reserveWait < Infinity) timer = setTimeout(pump, Math.max(10, Math.min(tokens < needed ? (needed - tokens) * 100 : Infinity, reserveWait)));
     }
   }
-  async function post<T>(body: Record<string, unknown>, priority = 1): Promise<T> {
+  async function post<T>(body: Record<string, unknown>, priority = 1, forceOfficial = false): Promise<T> {
     const history = ["userFills", "userFillsByTime", "historicalOrders", "userFunding", "userNonFundingLedgerUpdates"].includes(String(body.type));
-    const extraReserved = history && priority >= 2 ? 100 : 0;
-    const weight = (["clearinghouseState", "spotClearinghouseState", "allMids"].includes(String(body.type)) ? 2 : 20) + extraReserved;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    const wallet = typeof body.user === "string" ? body.user.toLowerCase() : undefined;
+    const archive = Boolean(!forceOfficial && archiveInfoUrl && wallet && archiveWallets.has(wallet) && ["userFills", "userFillsByTime"].includes(String(body.type)));
+    const extraReserved = history && priority >= 2 && !archive ? 100 : 0;
+    const weight = (archive ? 1 : ["clearinghouseState", "spotClearinghouseState", "allMids"].includes(String(body.type)) ? 2 : 20) + extraReserved;
+    const attempts = archive ? 2 : 3;
+    for (let attempt = 0; attempt < attempts; attempt++) {
     if (queue.length >= 200) throw new Error("Collector request queue is full");
-    let retry = false;
+    let retry = false, retryDelay = 0;
     try { return await new Promise<T>((resolve, reject) => {
-      const wallet = typeof body.user === "string" ? body.user.toLowerCase() : undefined;
       queue.push({ priority: walletPriority(wallet, priority), basePriority: priority, weight, recovery: history, queuedAt: Date.now(), wallet, resolve: resolve as (value: unknown) => void, reject, run: async () => {
           const started = Date.now(), requestPriority = walletPriority(wallet, priority); let code: number | undefined;
           try {
-          const response = await fetcher("https://api.hyperliquid.xyz/info", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(20_000) });
+          const response = await fetcher(archive ? archiveInfoUrl! : "https://api.hyperliquid.xyz/info", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(20_000) });
           code = response.status;
           if (response.ok) {
             const value = await response.json();
@@ -67,14 +79,20 @@ export function createInfoClient(fetcher: typeof fetch = fetch, observe?: (detai
           const retryAfter = response.headers.get("retry-after"); const seconds = Number(retryAfter);
           const requestedDelay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retryAfter ?? "") - Date.now();
           const delay = Number.isFinite(requestedDelay) ? Math.min(300_000, Math.max(10_000, requestedDelay)) : 10_000;
-          cooldownUntil = Math.max(cooldownUntil, Date.now() + delay); retry = true;
+          if (archive) retryDelay = delay; else cooldownUntil = Math.max(cooldownUntil, Date.now() + delay); retry = true;
           throw new Error(`Hyperliquid API: ${response.status}`);
           } catch (error) {
             report({ operation: String(body.type), wallet: typeof body.user === "string" ? body.user : undefined, code, durationMs: Date.now() - started, attempt: attempt + 1, priority: requestPriority, error: error instanceof Error ? error.message : "Unknown request error" });
             throw error;
           }
       } }); pump();
-    }); } catch (error) { if (!retry || attempt === 2) throw error; }
+    }); } catch (error) {
+      if (!retry || attempt === attempts - 1) {
+        if (archive) return post<T>(body, priority, true);
+        throw error;
+      }
+      if (retryDelay) await new Promise(resolve => setTimeout(resolve, retryDelay));
+    }
     }
     throw new Error("Hyperliquid retries exhausted");
   }
