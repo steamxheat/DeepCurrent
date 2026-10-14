@@ -1,7 +1,7 @@
 import { validWalletAddress } from "./fill-journal.ts";
 
 type Pending = { from: number; latest: number; queuedAt: number; due: number; inFlight: boolean };
-export function createConfirmationQueue() {
+export function createConfirmationQueue(onGap: (wallet: string, from: number, through: number, reason: string) => void = () => {}) {
   const pending = new Map<string, Pending>(); let rejected = 0; let expired = 0;
   function enqueue(address: string, time: number, now = Date.now()) {
     const wallet = address.toLowerCase();
@@ -12,12 +12,14 @@ export function createConfirmationQueue() {
     pending.set(wallet, { from: Math.max(0, time - 1), latest: time, queuedAt: now, due: now + 250, inFlight: false }); return true;
   }
   function take(priority: (wallet: string) => number, now = Date.now()) {
-    for (const [wallet, entry] of pending) if (!entry.inFlight && entry.latest < now - 60_000) { pending.delete(wallet); expired++; }
+    for (const [wallet, entry] of pending) if (!entry.inFlight && entry.latest < now - 60_000) { onGap(wallet, entry.from, entry.latest, "expired"); pending.delete(wallet); expired++; }
     const next = [...pending].filter(([, entry]) => !entry.inFlight && entry.due <= now)
       .sort(([a, left], [b, right]) => priority(a) - priority(b) || left.queuedAt - right.queuedAt)[0];
     if (!next) return null;
     const [wallet, entry] = next; entry.inFlight = true;
-    return { wallet, from: Math.min(now, Math.max(now - 60_000, entry.from)), through: now };
+    const from = Math.min(now, Math.max(now - 60_000, entry.from));
+    if (from > entry.from) { onGap(wallet, entry.from, from - 1, "window_trimmed"); entry.from = from; }
+    return { wallet, from, through: now };
   }
   function complete(wallet: string, through: number, confirmed: boolean, now = Date.now()) {
     const entry = pending.get(wallet); if (!entry) return;

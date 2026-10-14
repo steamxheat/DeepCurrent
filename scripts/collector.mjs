@@ -36,7 +36,10 @@ const targets = new Map(); const subscribedUsers = new Set(); const ack = new Se
 const subscribedAt = new Map(); const lastTrade = new Map();
 let watchedWallets = new Set();
 const seenMarkets = new Set();
-const confirmations = createConfirmationQueue(); let confirmationRequests = 0; let confirmationFailures = 0;
+const confirmations = createConfirmationQueue((wallet, from, through, reason) => {
+  recoverQueue.add(wallet);
+  health.event("confirmation_failed", { wallet, from, through, stage: reason, error: "Confirmation window missed; history recovery queued" });
+}); let confirmationRequests = 0; let confirmationFailures = 0;
 let fillsChanged = 0; let fillsRepeated = 0; let fillsRejected = 0;
 const pendingSubscriptions = new Map(); const takeSocketMessage = createSocketBudget();
 const activeWork = new Set(); const snapshotDue = new Map(); const resourceDue = new Map(); const historyDue = new Map(); const resourcesInFlight = new Set(); const historyInFlight = new Set();

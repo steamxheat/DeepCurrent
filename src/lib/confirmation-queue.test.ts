@@ -3,6 +3,15 @@ import test from "node:test";
 import { createConfirmationQueue } from "./confirmation-queue.ts";
 
 const wallet = (index: number) => `0x${index.toString(16).padStart(40, "0")}`;
+test("expired and clipped windows send the missed interval to recovery", () => {
+  const missed: unknown[] = []; const queue = createConfirmationQueue((...gap) => missed.push(gap));
+  queue.enqueue(wallet(1), 1000, 1000); assert.equal(queue.take(() => 0, 61001), null);
+  assert.deepEqual(missed, [[wallet(1), 999, 1000, "expired"]]);
+  queue.enqueue(wallet(2), 1000, 1000); queue.enqueue(wallet(2), 70000, 70000);
+  const task = queue.take(() => 0, 70250)!; assert.equal(task.from, 10250);
+  assert.deepEqual(missed[1], [wallet(2), 999, 10249, "window_trimmed"]);
+  queue.complete(wallet(2), task.through, true, 70251); assert.equal(queue.stats().pending, 0);
+});
 test("confirmations coalesce fills, prioritize viewers and never duplicate an in-flight wallet", () => {
   const queue = createConfirmationQueue(); queue.enqueue(wallet(1), 1000, 1000); queue.enqueue(wallet(1), 1001, 1001);
   queue.enqueue(wallet(2), 1000, 1000);

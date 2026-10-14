@@ -82,10 +82,9 @@ export function positionOpenedAt(currentSize: number, coin: string, fills: Fill[
 }
 
 export function closedTrades(fills: Fill[]) {
-  type State = { direction: "LONG" | "SHORT"; openedAt: number | null; entrySize: number; entryNotional: number; exitSize: number; exitNotional: number; netPnl: number; basisKnown: boolean };
+  type State = { direction: "LONG" | "SHORT"; size: string; openedAt: number | null; entrySize: number; entryNotional: number; exitSize: number; exitNotional: number; netPnl: number; basisKnown: boolean };
   const states = new Map<string, State>();
   const trades: ClosedTrade[] = [];
-  const tolerance = 1e-9;
   const chains = [...new Set(fills.map((fill) => fill.coin))].map((coin) => ({ coin, ...orderFillChain(fills.filter((fill) => fill.coin === coin)) }));
   const ambiguous = new Set(chains.flatMap((chain) => [...chain.ambiguousTimes].map((time) => `${chain.coin}:${time}`)));
   const ordered = chains.flatMap((chain) => chain.fills);
@@ -100,25 +99,25 @@ export function closedTrades(fills: Fill[]) {
     const before = Number(change.before); const after = Number(change.after);
     const beforeDirection = before >= 0 ? "LONG" as const : "SHORT" as const;
     let state = prior;
-    const priorSize = prior ? (prior.entrySize - prior.exitSize) * (prior.direction === "LONG" ? 1 : -1) : NaN;
-    if (!state || before === 0 || state.direction !== beforeDirection || Math.abs(priorSize - before) > tolerance) {
-      state = { direction: before === 0 ? after > 0 ? "LONG" : "SHORT" : beforeDirection, openedAt: before === 0 ? fill.time : null, entrySize: Math.abs(before), entryNotional: 0, exitSize: 0, exitNotional: 0, netPnl: 0, basisKnown: before === 0 };
+    if (!state || before === 0 || state.direction !== beforeDirection || !decimalEqual(state.size, change.before)) {
+      state = { direction: before === 0 ? after > 0 ? "LONG" : "SHORT" : beforeDirection, size: change.before, openedAt: before === 0 ? fill.time : null, entrySize: Math.abs(before), entryNotional: 0, exitSize: 0, exitNotional: 0, netPnl: 0, basisKnown: before === 0 };
       states.set(fill.coin, state);
     }
-    const increases = after !== 0 && (before === 0 || Math.sign(after) === Math.sign(before)) && Math.abs(after) > Math.abs(before);
-    const closedSize = before !== 0 && (after === 0 || Math.sign(after) !== Math.sign(before)) ? Math.abs(before) : Math.max(0, Math.abs(before) - Math.abs(after));
+    const increases = change.action === "OPEN" || change.action === "ADD";
+    const closedSize = change.action === "CLOSE" || change.action === "FLIP" ? Math.abs(before) : change.action === "REDUCE" ? quantity : 0;
     if (increases) {
-      const added = Math.abs(after) - Math.abs(before);
+      const added = quantity;
       state.entrySize += added; state.entryNotional += added * price; state.netPnl -= feeInUsd(fill);
     }
     if (closedSize) {
       const closedFee = feeInUsd(fill) * closedSize / quantity;
       state.exitSize += closedSize; state.exitNotional += closedSize * price; state.netPnl += Number(fill.closedPnl || 0) - closedFee;
     }
+    state.size = change.after;
     if (after === 0 || (before !== 0 && Math.sign(after) !== Math.sign(before))) {
-      trades.push({ coin: fill.coin, direction: beforeDirection, openedAt: state.openedAt, closedAt: fill.time, entryPx: state.basisKnown && state.entrySize ? state.entryNotional / state.entrySize : null, exitPx: state.exitNotional / Math.max(state.exitSize, tolerance), size: state.exitSize, netPnl: state.netPnl });
+      trades.push({ coin: fill.coin, direction: beforeDirection, openedAt: state.openedAt, closedAt: fill.time, entryPx: state.basisKnown && state.entrySize ? state.entryNotional / state.entrySize : null, exitPx: state.exitNotional / state.exitSize, size: state.exitSize, netPnl: state.netPnl });
       states.delete(fill.coin);
-      if (after !== 0) states.set(fill.coin, { direction: after > 0 ? "LONG" : "SHORT", openedAt: fill.time, entrySize: Math.abs(after), entryNotional: Math.abs(after) * price, exitSize: 0, exitNotional: 0, netPnl: -feeInUsd(fill) * Math.abs(after) / quantity, basisKnown: true });
+      if (after !== 0) states.set(fill.coin, { direction: after > 0 ? "LONG" : "SHORT", size: change.after, openedAt: fill.time, entrySize: Math.abs(after), entryNotional: Math.abs(after) * price, exitSize: 0, exitNotional: 0, netPnl: -feeInUsd(fill) * Math.abs(after) / quantity, basisKnown: true });
     }
   }
   return trades.sort((a, b) => b.closedAt - a.closedAt);

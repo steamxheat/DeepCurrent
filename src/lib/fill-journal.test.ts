@@ -13,6 +13,34 @@ const wallet = `0x${"a".repeat(40)}`;
 const fill = (overrides: Partial<RawFill> = {}): RawFill => ({ coin: "BTC", time: 100, side: "B", sz: "1", px: "100", startPosition: "0", fee: "1", feeToken: "USDC", closedPnl: "0", dir: "Open Long", hash: "h", tid: 1, ...overrides });
 const setup = () => createFillJournal(new DatabaseSync(":memory:"));
 
+test("unconfirmed or conflicting intervening executions cannot invent a completed opening", () => {
+  for (const conflict of [false, true]) {
+    const j = setup(); j.ingest(wallet, fill(), "userFills");
+    j.ingest(wallet, fill({ time: 200, tid: 2, side: "A", startPosition: conflict ? "1" : undefined }), conflict ? "userFills" : "market");
+    if (conflict) j.ingest(wallet, fill({ time: 200, tid: 2, side: "A", startPosition: "2" }), "userFills");
+    j.ingest(wallet, fill({ time: 300, tid: 3, startPosition: undefined }), "market");
+    j.ingest(wallet, fill({ time: 400, tid: 4, side: "A", startPosition: "1" }), "userFills"); j.project();
+    assert.equal(j.completed(wallet).at(-1)?.openedAt, null);
+    assert.equal(j.completed(wallet).at(-1)?.entryPx, null);
+    j.db.prepare("UPDATE lifecycle_events SET algorithm_version=5").run();
+    const upgraded = createFillJournal(j.db); assert.ok(upgraded.db.prepare("SELECT COUNT(*) n FROM projection_jobs").get()!.n);
+    upgraded.project(); assert.equal(upgraded.completed(wallet).at(-1)?.openedAt, null);
+    assert.equal(upgraded.db.prepare("SELECT MIN(algorithm_version) version FROM lifecycle_events").get()?.version, 6);
+    j.db.close();
+  }
+});
+
+test("disconnect marks more than 5000 watched addresses without rejecting valid favorites", () => {
+  const j = setup(); const wallets = Array.from({ length: 5001 }, (_, index) => `0x${index.toString(16).padStart(40, "0")}`);
+  const insert = j.db.prepare("INSERT INTO ingestion_coverage VALUES (?,'fills',1,2,'covered_interval',NULL,3)");
+  transaction(j.db, () => { wallets.forEach((wallet) => insert.run(wallet)); });
+  assert.throws(() => j.markStreamGap([...wallets, "invalid"]));
+  assert.equal(j.db.prepare("SELECT COUNT(*) n FROM ingestion_coverage WHERE status='gap'").get()?.n, 0);
+  j.markStreamGap(wallets);
+  assert.equal(j.db.prepare("SELECT COUNT(*) n FROM ingestion_coverage WHERE status='gap'").get()?.n, 5001);
+  j.db.close();
+});
+
 test("feed evidence separates historic closed, absent, unknown and current lifecycles", () => {
   const j = setup(); j.ingest(wallet, fill(), "userFills"); j.ingest(wallet, fill({ time: 200, tid: 2, side: "A", startPosition: "1", closedPnl: "10" }), "userFills"); j.project();
   const open = j.events().find((row) => row.action === "OPEN")!;

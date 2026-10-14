@@ -22,6 +22,17 @@ test("exact fills distinguish an open from a reduction", () => {
   assert.equal(activityKind({ dir: "Close Long", side: "A", source: "user", startPosition: "2", sz: "2" }).label, "CLOSE");
 });
 
+test("authoritative evidence can downgrade a live entry but a plain market echo cannot", () => {
+  const known = { wallet: "0xabc", walletName: "A", coin: "BTC", time: 100, tid: 1, px: "100", sz: "1", side: "B" as const,
+    hash: "h", fee: "0", closedPnl: "0", dir: "Open Long", startPosition: "0", source: "user" as const, action: "OPEN", direction: "LONG", positionStatus: "open" as const };
+  const raw = { ...known, source: "market" as const, startPosition: undefined, positionStatus: undefined };
+  assert.equal(mergePulseFills([known], [raw])[0].source, "user");
+  const corrected = { ...raw, positionStatus: "unknown" as const, action: "BUY", direction: "BUY", reason: "conflicting_evidence" };
+  const merged = mergePulseFills([known], [corrected])[0];
+  assert.equal(merged.positionStatus, "unknown"); assert.equal(activityKind(merged).label, "BUY");
+  assert.equal(activityKind({ ...corrected, side: "A", dir: "Close Long" }).label, "SELL");
+});
+
 test("live buffer preserves exact wallet history when public trades arrive", () => {
   const exact = Array.from({ length: 130 }, (_, index) => ({ coin: "BTC", px: "100", sz: "1", side: "B" as const, time: index, dir: "Open Long", closedPnl: "0", fee: "0", hash: `exact-${index}`, wallet: "0xbusy", walletName: "Busy", source: "user" as const }));
   exact.push({ ...exact[0], time: 200, hash: "quiet", wallet: "0xquiet", walletName: "Quiet" });

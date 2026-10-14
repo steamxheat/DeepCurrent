@@ -7,6 +7,23 @@ const fill = (overrides: Partial<Fill>): Fill => ({
   closedPnl: "0", fee: "1", hash: Math.random().toString(), wallet: "0x1", ...overrides,
 });
 
+test("tiny positions keep the real exit price and exact continuity", () => {
+  const opening = fill({ time: 100, sz: "0.0000000001", startPosition: "0", fee: "0" });
+  const [trade] = closedTrades([opening, fill({ time: 200, side: "A", sz: "0.0000000001", startPosition: "0.0000000001", px: "200", fee: "0" })]);
+  assert.equal(trade.exitPx, 200); assert.equal(trade.openedAt, 100);
+  const [gap] = closedTrades([opening, fill({ time: 200, side: "A", sz: "0.00000000005", startPosition: "0.00000000005", px: "200", fee: "0" })]);
+  assert.equal(gap.openedAt, null); assert.equal(gap.entryPx, null); assert.equal(gap.exitPx, 200);
+});
+
+test("small additions still charge fees when Number rounds the total position to the same value", () => {
+  const [trade] = closedTrades([
+    fill({ time: 100, startPosition: "0", fee: "0" }),
+    fill({ time: 200, startPosition: "1", sz: "0.000000000000000000001", fee: "2" }),
+    fill({ time: 300, startPosition: "1.000000000000000000001", sz: "1.000000000000000000001", side: "A", fee: "0", closedPnl: "10" }),
+  ]);
+  assert.equal(trade.openedAt, 100); assert.equal(trade.netPnl, 8);
+});
+
 test("fill stats use only closed trades and include signed fees", () => {
   const result = computeFillStats([
     fill({ closedPnl: "11", fee: "1" }),

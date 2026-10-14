@@ -29,7 +29,7 @@ test("quiet hours work when they cross midnight", () => {
 });
 
 test("filters additions, size, coins and confluence", () => {
-  const event = { action: "ADD" as const, coin: "BTC", notional: 10_000, time: Date.UTC(2026, 0, 1, 12) };
+  const event = { action: "ADD" as const, coin: "BTC", notional: 10_000, time: Date.UTC(2026, 0, 1, 12), positionStatus: "open" };
   assert.equal(shouldNotify({ ...defaultNotificationSettings, includeAdds: false }, event), false);
   assert.equal(shouldNotify({ ...defaultNotificationSettings, minNotional: 20_000 }, event), false);
   assert.equal(shouldNotify({ ...defaultNotificationSettings, coins: ["ETH"] }, event), false);
@@ -37,7 +37,7 @@ test("filters additions, size, coins and confluence", () => {
 });
 
 test("new notification rules reject unknown metrics and match explicit markets or base symbols", () => {
-  const event = { action: "OPEN" as const, direction: "SHORT", coin: "xyz:BTC", notional: 10_000, time: 100, leverage: 5, copyability: 80 };
+  const event = { action: "OPEN" as const, direction: "SHORT", coin: "xyz:BTC", notional: 10_000, time: 100, leverage: 5, copyability: 80, positionStatus: "open" };
   assert.equal(shouldNotify({ ...defaultNotificationSettings, coins: ["BTC"], direction: "SHORT", minCopyability: 70, minLeverage: 2, maxLeverage: 10 }, event), true);
   assert.equal(shouldNotify({ ...defaultNotificationSettings, direction: "LONG" }, event), false);
   assert.equal(shouldNotify({ ...defaultNotificationSettings, minCopyability: 70 }, { ...event, copyability: undefined }), false);
@@ -53,13 +53,15 @@ test("notification normalization migrates old profiles and quiet time uses deliv
   const settings = normalizeNotificationSettings({ minNotional: Infinity, minLeverage: NaN, minCopyability: 1000, minWallets: 1, confluenceMinutes: 1 });
   assert.equal(settings.minNotional, 5000); assert.equal(settings.minCopyability, 100); assert.equal(settings.minLeverage, 0); assert.equal(settings.minWallets, 2); assert.equal(settings.confluenceMinutes, 1);
   const quiet = { ...defaultNotificationSettings, timezone: "UTC", quietStart: "23:00", quietEnd: "07:00" };
-  assert.equal(shouldNotify(quiet, { action: "OPEN", coin: "BTC", notional: 10000, time: Date.UTC(2026, 1, 1, 22) }, 1, Date.UTC(2026, 1, 1, 23)), false);
+  assert.equal(shouldNotify(quiet, { action: "OPEN", coin: "BTC", notional: 10000, time: Date.UTC(2026, 1, 1, 22), positionStatus: "open" }, 1, Date.UTC(2026, 1, 1, 23)), false);
 });
 
 test("a delayed entry notification is suppressed once closure or absence is known", () => {
   const event = { action: "OPEN" as const, coin: "BTC", notional: 10000, time: 100 };
   assert.equal(shouldNotify(defaultNotificationSettings, { ...event, positionStatus: "closed" }), false);
   assert.equal(shouldNotify(defaultNotificationSettings, { ...event, positionStatus: "absent" }), false);
-  assert.equal(shouldNotify(defaultNotificationSettings, { ...event, positionStatus: "unknown" }), true);
+  assert.equal(shouldNotify(defaultNotificationSettings, { ...event, positionStatus: "unknown" }), false);
+  assert.equal(shouldNotify(defaultNotificationSettings, event), false);
+  assert.equal(shouldNotify(defaultNotificationSettings, { ...event, positionStatus: "open" }), true);
   assert.equal(shouldNotify(defaultNotificationSettings, { ...event, action: "CLOSE", positionStatus: "closed" }), true);
 });

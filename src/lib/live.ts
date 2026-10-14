@@ -63,7 +63,7 @@ export function mergePulseFills(current: PulseFill[], incoming: PulseFill[]) {
   for (const fill of [...current, ...incoming]) {
     const key = fill.tid === undefined ? `${fill.wallet}:${fill.hash}:${fill.time}:${fill.coin}:${fill.px}:${fill.sz}` : `${fill.wallet.toLowerCase()}:${fill.coin}:${fill.time}:${fill.tid}`;
     const previous = rows.get(key);
-    if (!previous || previous.source === "market" || fill.source !== "market") rows.set(key, fill);
+    if (!previous || previous.source === "market" || fill.source !== "market" || fill.positionStatus !== undefined) rows.set(key, fill);
   }
   const sorted = [...rows.values()].sort((a, b) => b.time - a.time);
   const exactCounts = new Map<string, number>();
@@ -78,9 +78,10 @@ export function mergePulseFills(current: PulseFill[], incoming: PulseFill[]) {
 }
 
 export function activityKind(fill: Pick<PulseFill, "dir" | "side" | "source" | "startPosition" | "sz" | "action" | "direction">) {
-  if (fill.action && fill.direction && fill.source !== "market" && fill.startPosition !== undefined) return { label: fill.action, direction: fill.direction, exact: !["BUY", "SELL"].includes(fill.action), kind: ["REDUCE", "CLOSE"].includes(fill.action) ? "neutral" as const : fill.direction === "LONG" || fill.direction === "BUY" ? "gain" as const : "loss" as const };
+  if (fill.source === "market") return { label: fill.side === "B" ? "BUY" : "SELL", direction: fill.side === "B" ? "BUY" as const : "SELL" as const, exact: false, kind: fill.side === "B" ? "gain" as const : "loss" as const };
+  if (fill.action && fill.direction && fill.startPosition !== undefined) return { label: fill.action, direction: fill.direction, exact: !["BUY", "SELL"].includes(fill.action), kind: ["REDUCE", "CLOSE"].includes(fill.action) ? "neutral" as const : fill.direction === "LONG" || fill.direction === "BUY" ? "gain" as const : "loss" as const };
   const direction = fill.dir.toLowerCase();
-  if (fill.source !== "market" && fill.startPosition !== undefined) {
+  if (fill.startPosition !== undefined) {
     const change = fillTransition({ ...fill, coin: direction.includes("buy") || direction.includes("sell") ? "@spot" : "perp", time: 0 });
     if (change) return { label: change.action, direction: change.direction, exact: true, kind: ["REDUCE", "CLOSE"].includes(change.action) ? "neutral" as const : change.direction === "LONG" ? "gain" as const : "loss" as const };
   }

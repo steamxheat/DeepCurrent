@@ -100,8 +100,8 @@ export function createFillJournal(db: DatabaseSync) {
     if (!(db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((field) => field.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
   db.exec("CREATE INDEX IF NOT EXISTS lifecycle_seq ON lifecycle_events(updated_seq)");
-  db.exec(`INSERT OR IGNORE INTO projection_jobs SELECT wallet,coin FROM lifecycle_events WHERE algorithm_version!=5;
-    UPDATE canonical_fills SET projected_revision=0 WHERE id IN (SELECT id FROM lifecycle_events WHERE algorithm_version!=5);`);
+  db.exec(`INSERT OR IGNORE INTO projection_jobs SELECT wallet,coin FROM lifecycle_events WHERE algorithm_version!=6;
+    UPDATE canonical_fills SET projected_revision=0 WHERE id IN (SELECT id FROM lifecycle_events WHERE algorithm_version!=6);`);
 
   function ingest(wallet: string, input: unknown, source: JournalSource, mode: IngestMode = "history", receivedAt = Date.now()) {
     const address = wallet.toLowerCase(); const payload = JSON.stringify(input);
@@ -180,12 +180,12 @@ export function createFillJournal(db: DatabaseSync) {
     const eventPayload = JSON.stringify(event);
     const previous = db.prepare("SELECT payload,revision,algorithm_version FROM lifecycle_events WHERE id=?").get(row.id) as { payload: string; revision: number; algorithm_version: number } | undefined;
     // Replaying history must not turn unchanged old fills into thousands of live updates.
-    if (previous?.payload === eventPayload && previous.revision === row.revision && previous.algorithm_version === 5) {
+    if (previous?.payload === eventPayload && previous.revision === row.revision && previous.algorithm_version === 6) {
       if (row.projected_revision !== row.revision) db.prepare("UPDATE canonical_fills SET projected_revision=revision WHERE id=?").run(row.id);
       return state;
     }
     db.prepare(`INSERT INTO lifecycle_events (id,wallet,coin,occurred_at,payload,revision,algorithm_version,updated_seq,projected_at,confirmed_at)
-      VALUES (?,?,?,?,?,?,5,(SELECT revision+1 FROM journal_changes WHERE id=1),?,?) ON CONFLICT(id) DO UPDATE SET
+      VALUES (?,?,?,?,?,?,6,(SELECT revision+1 FROM journal_changes WHERE id=1),?,?) ON CONFLICT(id) DO UPDATE SET
       payload=excluded.payload,revision=excluded.revision,algorithm_version=excluded.algorithm_version,updated_seq=excluded.updated_seq,
       confirmed_at=CASE WHEN excluded.confirmed_at IS NULL THEN NULL ELSE COALESCE(lifecycle_events.confirmed_at,excluded.confirmed_at) END`)
       .run(row.id, row.wallet, row.coin, row.occurred_at, eventPayload, row.revision, Date.now(), validTransition ? Date.now() : null);
@@ -223,8 +223,9 @@ export function createFillJournal(db: DatabaseSync) {
         SET size=excluded.size,opened_at=excluded.opened_at,last_time=excluded.last_time,reason=excluded.reason`)
         .run(wallet, coin, state.size, state.openedAt, state.lastTime, state.reason);
       if (!incremental || pending.some((row) => row.conflict || JSON.parse(row.payload).startPosition !== undefined)) {
-        const history = db.prepare("SELECT payload FROM canonical_fills WHERE wallet=? AND coin=? AND conflict=0 ORDER BY occurred_at,id").all(wallet, coin) as { payload: string }[];
-        const completed = closedTrades(history.map((row) => JSON.parse(row.payload) as RawFill).filter((fill) => fill.startPosition !== undefined));
+        const history = db.prepare("SELECT payload,conflict FROM canonical_fills WHERE wallet=? AND coin=? ORDER BY occurred_at,id").all(wallet, coin) as { payload: string; conflict: number }[];
+        // Unknown/conflicting executions break continuity; dropping them invents a lifecycle across the gap.
+        const completed = closedTrades(history.map((row) => ({ ...JSON.parse(row.payload), ...(row.conflict ? { startPosition: undefined } : {}) }) as RawFill));
         db.prepare("INSERT INTO completed_position_projection VALUES (?,?,?,?) ON CONFLICT(wallet,coin) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at")
           .run(wallet, coin, JSON.stringify(completed), Date.now());
       }
@@ -308,10 +309,11 @@ export function createFillJournal(db: DatabaseSync) {
     return db.prepare("SELECT * FROM ingestion_coverage WHERE wallet=? AND feed=?").get(wallet.toLowerCase(), feed) as { from_time: number; through_time: number; status: string; reason: string | null; updated_at: number } | undefined;
   }
   function markStreamGap(wallets: string[], reason = "stream_disconnected") {
-    if (wallets.length > 5000 || wallets.some((wallet) => !validWalletAddress(wallet))) throw new Error("Invalid stream wallet set");
-    transaction(db, () => {
-      const update = db.prepare("UPDATE ingestion_coverage SET status='gap',reason=?,updated_at=? WHERE wallet=? AND feed='fills'");
-      const now = Date.now(); for (const wallet of wallets) update.run(reason, now, wallet.toLowerCase());
+    if (wallets.some((wallet) => !validWalletAddress(wallet))) throw new Error("Invalid stream wallet set");
+    const update = db.prepare("UPDATE ingestion_coverage SET status='gap',reason=?,updated_at=? WHERE wallet=? AND feed='fills'");
+    const now = Date.now();
+    for (let start = 0; start < wallets.length; start += 5000) transaction(db, () => {
+      for (const wallet of wallets.slice(start, start + 5000)) update.run(reason, now, wallet.toLowerCase());
     });
   }
   function hasUnconfirmed(wallet: string, from: number, through: number) {

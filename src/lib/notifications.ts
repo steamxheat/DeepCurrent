@@ -103,7 +103,7 @@ export function isQuietTime(settings: NotificationSettings, time: number) {
 
 export function shouldNotify(settings: NotificationSettings, event: { action: NotificationAction; coin: string; notional: number; time: number; direction?: string; leverage?: number; copyability?: number; positionStatus?: string }, confluenceCount = 1, now = event.time) {
   if (!["OPEN", "ADD", "REDUCE", "CLOSE", "FLIP"].includes(event.action)) return false;
-  if (["OPEN", "ADD", "FLIP"].includes(event.action) && ["closed", "absent"].includes(event.positionStatus ?? "")) return false;
+  if (["OPEN", "ADD", "FLIP"].includes(event.action) && event.positionStatus !== "open") return false;
   if (!settings.enabled || !Number.isFinite(event.notional) || event.notional < settings.minNotional || isQuietTime(settings, now)) return false;
   if (settings.coins.length && !settings.coins.some((coin) => coin.includes(":") || coin.includes("/") ? coin === event.coin.toUpperCase() : coin === notificationCoin(event.coin))) return false;
   if (!settings.includeOpens && ["OPEN", "FLIP"].includes(event.action)) return false;
