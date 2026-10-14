@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --experimental-strip-types --test src/lib/*.test.ts",
+    "test:soak": "node --experimental-strip-types scripts/soak-users.mjs",
     "check:live": "node scripts/check-live.mjs",
     "backup:db": "node --experimental-strip-types scripts/backup-db.mjs",
     "benchmark:journal": "node --experimental-strip-types scripts/benchmark-journal.mjs",

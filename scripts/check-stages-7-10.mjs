@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -28,15 +28,16 @@ for (const wallet of wallets) { store.coverage(wallet.address, "fills", now - 10
 store.resource(wallets[0].address, "subAccounts", [{ master: wallets[0].address, subAccountUser: wallets[2].address }]);
 function snapshots() {
   for (const [index, wallet] of wallets.entries()) {
-    const coin = index < 3 ? "BTC" : index === 3 ? "ETH" : "SOL", size = index < 3 ? "1" : index === 4 ? "11" : "125";
-    const assetPositions = index === 3 ? [] : [{ position: { coin, szi: size, entryPx: "100", positionValue: String(Number(size) * 101), unrealizedPnl: size, marginUsed: "20", leverage: { value: 5 }, liquidationPx: "80" } }];
+    const coin = index < 3 ? "BTC" : index === 3 ? "ETH" : "SOL", size = index === 0 && process.argv.includes("--soak") ? store.getState(wallet.address, coin)?.size || "0" : index < 3 ? "1" : index === 4 ? "11" : "125";
+    const assetPositions = index === 3 || size === "0" ? [] : [{ position: { coin, szi: size, entryPx: "100", positionValue: String(Number(size) * 101), unrealizedPnl: size, marginUsed: "20", leverage: { value: 5 }, liquidationPx: "80" } }];
     const time = Date.now(); store.recordScope({ wallet: wallet.address, scope: "", requestedAt: time, receivedAt: time, payload: { assetPositions, marginSummary: { accountValue: "100000", totalMarginUsed: "20" }, withdrawable: "99980" } });
     store.recordScope({ wallet: wallet.address, scope: "spot", requestedAt: time, receivedAt: time, payload: { balances: [] } });
   }
 }
 snapshots();
-const url = "http://localhost:3001";
-const child = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "-p", "3001"], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, DC_JOURNAL_MODE: "shadow", VAPID_PUBLIC_KEY: "", VAPID_PRIVATE_KEY: "" } });
+const port = process.argv.includes("--soak") ? "3002" : "3001", url = `http://localhost:${port}`;
+for (const item of [".next", "node_modules", "public", "package.json", "next.config.ts"]) symlinkSync(path.resolve(item), path.join(directory, item));
+const child = spawn(process.execPath, [path.resolve("node_modules/next/dist/bin/next"), "start", "-p", port, "--hostname", "127.0.0.1"], { cwd: directory, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, APP_URL: url, DC_JOURNAL_MODE: "shadow", TELEGRAM_BOT_TOKEN: process.argv.includes("--soak") ? process.env.DC_SOAK_TEST_TOKEN || "" : "", ADMIN_TELEGRAM_IDS: process.argv.includes("--soak") ? Array.from({ length: 100 }, (_, index) => String(900000 + index)).join(",") : "", VAPID_PUBLIC_KEY: "", VAPID_PRIVATE_KEY: "" } });
 child.stdout.on("data", () => {}); child.stderr.on("data", (chunk) => { const message = String(chunk); if (!message.includes("ExperimentalWarning") && !message.includes("trace-warnings")) process.stderr.write(message); });
 let stopped = false; let timer;
 function stop() { if (stopped) return; stopped = true; clearInterval(timer); child.kill("SIGTERM"); store.db.close(); }
@@ -105,5 +106,15 @@ try {
   console.log(JSON.stringify({ checks, url, walletUrl: `${url}/wallet/${wallets[0].address}`, fixture: directory,
     loadWallets: store.status("targets").payload.wallets.length, savedEvents: store.db.prepare("SELECT COUNT(*) count FROM lifecycle_events").get().count,
     productionChanged: false, externalNotificationsSent: false }));
-  if (process.argv.includes("--keep")) { timer = setInterval(snapshots, 5000); await new Promise(() => {}); }
+  if (process.argv.includes("--keep")) {
+    let ticks = 0;
+    timer = setInterval(() => {
+      if (process.argv.includes("--soak") && ++ticks % 3 === 0) {
+        const step = Math.floor(ticks / 3 - 1) % 4, before = ["1", "2", "1", "0"][step], side = step === 1 || step === 2 ? "A" : "B";
+        add(wallets[0].address, { time: Date.now(), startPosition: before, side, dir: ["Increase Long", "Reduce Long", "Close Long", "Open Long"][step], closedPnl: side === "A" ? "20" : "0" });
+        store.project(100); store.coverage(wallets[0].address, "fills", now - 1000000, Date.now(), "covered_interval");
+      }
+      snapshots();
+    }, 5000); await new Promise(() => {});
+  }
 } finally { stop(); }
