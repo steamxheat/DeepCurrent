@@ -10,7 +10,7 @@ Logs: `backups/qa-soak-<timestamp>/actions.jsonl` and `summary.json`. Every requ
 
 On the server use `DC_SOAK_PRODUCTION_URL=http://127.0.0.1:3000 npm run test:soak -- 8 30000 --detach`. A read-only production request runs once per round; two consecutive failures or responses above two seconds stop QA. This is a safety guard, not full hardware-resource monitoring.
 
-The launcher prints its worker PID. Send SIGTERM to that exact worker PID to stop the run; it stops its fixture server too. Logs and temporary test data are preserved for investigation. Source updates should wait for the run to finish or explicitly stop it first, because the fixture shares the tested build read-only.
+The launcher prints its worker PID. Send SIGTERM to that exact worker PID to stop the run; it stops its fixture server too. Logs and temporary test data are preserved for investigation. The fixture has its own copy of the tested build and separate runtime caches; installed dependencies and static source assets are linked read-only. Stop QA before replacing dependencies.
 
 Not covered: touch/visual usability, real-device installation/permission prompts, actual phone Push delivery, exchange latency for every wallet, and real copy-trading. Production collector diagnostics must be reviewed alongside QA logs. A passing synthetic run does not certify correct complete historical data.
 

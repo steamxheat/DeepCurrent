@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, symlinkSync } from "node:fs";
+import { cpSync, mkdtempSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -36,7 +36,9 @@ function snapshots() {
 }
 snapshots();
 const port = process.argv.includes("--soak") ? "3002" : "3001", url = `http://localhost:${port}`;
-for (const item of [".next", "node_modules", "public", "package.json", "next.config.ts"]) symlinkSync(path.resolve(item), path.join(directory, item));
+// Test runtime caches must never share the production build directory.
+cpSync(path.resolve(".next"), path.join(directory, ".next"), { recursive: true, filter: (name) => !name.split(path.sep).includes("cache") });
+for (const item of ["node_modules", "public", "package.json", "next.config.ts"]) symlinkSync(path.resolve(item), path.join(directory, item));
 const child = spawn(process.execPath, [path.resolve("node_modules/next/dist/bin/next"), "start", "-p", port, "--hostname", "127.0.0.1"], { cwd: directory, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, APP_URL: url, DC_JOURNAL_MODE: "shadow", TELEGRAM_BOT_TOKEN: process.argv.includes("--soak") ? process.env.DC_SOAK_TEST_TOKEN || "" : "", ADMIN_TELEGRAM_IDS: process.argv.includes("--soak") ? Array.from({ length: 100 }, (_, index) => String(900000 + index)).join(",") : "", VAPID_PUBLIC_KEY: "", VAPID_PRIVATE_KEY: "" } });
 child.stdout.on("data", () => {}); child.stderr.on("data", (chunk) => { const message = String(chunk); if (!message.includes("ExperimentalWarning") && !message.includes("trace-warnings")) process.stderr.write(message); });
 let stopped = false; let timer;
