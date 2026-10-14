@@ -3,7 +3,38 @@ import test from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { createInfoClient } from "./hyperliquid-client.ts";
 
-test("recovery gets reserved budget under sustained urgent load without raising the global limit", async (context) => {
+test("viewers and favorites are prioritized, including new requests, and leaving restores background priority", async context => {
+  context.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  const requested: string[] = [], priorities: number[] = [];
+  const viewer = `0x${"a".repeat(40)}`, favorite = `0x${"b".repeat(40)}`, other = `0x${"c".repeat(40)}`;
+  const client = createInfoClient(async (_url, options) => { requested.push(JSON.parse(String(options?.body)).user); return Response.json([]); }, entry => priorities.push(entry.priority));
+  for(let i=0;i<7;i++) await client.post({type:"meta"},0);
+  const background = client.post({type:"meta",user:other},4);
+  const watched = client.post({type:"meta",user:favorite},4);
+  client.prioritizeWallets([viewer], [favorite]);
+  const viewed = client.post({type:"meta",user:viewer},4);
+  context.mock.timers.tick(10000); await viewed;
+  context.mock.timers.tick(10000); await watched; await background;
+  assert.deepEqual(requested.slice(7), [viewer, favorite, other]); assert.deepEqual(priorities.slice(7), [0, 1, 4]);
+  client.prioritizeWallets([], []);
+  await client.post({type:"meta",user:viewer},4); assert.equal(priorities.at(-1),4);
+});
+
+test("leaving a profile demotes work that is still queued, not only future requests", async context => {
+  context.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  const wallet = `0x${"a".repeat(40)}`, operations: string[] = [];
+  const client = createInfoClient(async (_url, options) => { operations.push(JSON.parse(String(options?.body)).type); return Response.json([]); });
+  for(let i=0;i<7;i++) await client.post({type:"meta"},0);
+  client.prioritizeWallets([wallet], []);
+  const history = client.post({type:"userFills",user:wallet},4);
+  client.prioritizeWallets([], []);
+  const urgent = client.post({type:"userFillsByTime"},0);
+  context.mock.timers.tick(2000); await urgent;
+  context.mock.timers.tick(20000); await history;
+  assert.deepEqual(operations.slice(7), ["userFillsByTime", "userFills"]);
+});
+
+test("favorite recovery keeps its reserved budget under sustained urgent load without raising the global limit", async (context) => {
   context.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
   let recovered = false, urgentCount = 0;
   const client = createInfoClient(async (_url, options) => {
@@ -12,7 +43,8 @@ test("recovery gets reserved budget under sustained urgent load without raising 
     return Response.json([]);
   });
   for (let index = 0; index < 7; index++) await client.post({ type: "meta" }, 0);
-  const recovery = client.post({ type: "userFills" }, 4);
+  const favorite = `0x${"b".repeat(40)}`; client.prioritizeWallets([], [favorite]);
+  const recovery = client.post({ type: "userFills", user: favorite }, 4);
   const urgent: Promise<unknown>[] = [];
   for (let second = 0; second < 160; second++) {
     urgent.push(client.post({ type: "meta" }, 0));

@@ -20,6 +20,7 @@ import { createSocketBudget } from "../src/lib/socket-budget.ts";
 import { snapshotRefreshScopes, streamScopeSnapshots } from "../src/lib/wallet-snapshot.ts";
 import { createConfirmationQueue } from "../src/lib/confirmation-queue.ts";
 import { createRecoveryQueue } from "../src/lib/recovery-queue.ts";
+import { createViewerPriority, nextDueWallet } from "../src/lib/viewer-priority.ts";
 import { missingUserSubscriptions, selectStreamWallets } from "../src/lib/stream-wallets.ts";
 import { createCollectorHealth, diagnosticError } from "../src/lib/collector-health.ts";
 
@@ -44,6 +45,14 @@ const confirmations = createConfirmationQueue((wallet, from, through, reason) =>
 let fillsChanged = 0; let fillsRepeated = 0; let fillsRejected = 0;
 const pendingSubscriptions = new Map(); const takeSocketMessage = createSocketBudget();
 const activeWork = new Set(); const snapshotDue = new Map(); const resourceDue = new Map(); const historyDue = new Map(); const resourcesInFlight = new Set(); const historyInFlight = new Set();
+const updateViewers = createViewerPriority([snapshotDue, resourceDue, historyDue]);
+function refreshViewerPriorities() {
+  const { active, entered, exited } = updateViewers(journal.activeWallets());
+  client.prioritizeWallets(active, watchedWallets);
+  for (const wallet of entered) health.event("viewer_priority", { wallet, stage: "enter" });
+  for (const wallet of exited) health.event("viewer_priority", { wallet, stage: "exit" });
+  return [...active];
+}
 const subscriptions = new Map(); const timers = []; const limit = Math.min(1000, Math.max(10, Number(process.env.TRACKED_WALLETS) || 1000));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const short = (address) => `${address.slice(0, 6)}…${address.slice(-4)}`;
@@ -140,8 +149,8 @@ function flushSubscriptions() {
   }
 }
 function selectUsers() {
-  for (const wallet of journal.activeWallets()) client.prioritizeWallet(wallet);
   watchedWallets = new Set(getWatchedWallets());
+  refreshViewerPriorities();
   for (const wallet of watchedWallets) if (validWalletAddress(wallet) && !targets.has(wallet)) targets.set(wallet, { address: wallet, name: short(wallet), pnl: 0 });
   const selected = selectStreamWallets({ active: journal.activeWallets().filter(validWalletAddress), favorites: [...watchedWallets].filter(validWalletAddress),
     ranked: [...targets.keys()], subscribedAt, lastTrade, now: Date.now() });
@@ -303,7 +312,7 @@ async function snapshotWallet(wallet, priority) {
       if (scope !== "spot" && !Array.isArray(payload.assetPositions)) throw new Error("Invalid scoped position response");
       journal.recordScope({ wallet, scope, requestedAt, receivedAt: Date.now(), payload });
     } catch (error) { health.event("snapshot_failed", { wallet, scope, durationMs: Date.now() - requestedAt, error: diagnosticError(error) }); journal.recordScope({ wallet, scope, requestedAt, receivedAt: Date.now(), error: error.message }); }
-  })); snapshotDue.set(wallet, Date.now() + (priority <= 1 ? 8000 : 300_000));
+  })); snapshotDue.set(wallet, Date.now() + (journal.activeWallets().includes(wallet) ? 8000 : 300_000));
 }
 async function resourceWallet(wallet) {
   if (!journal.resource(wallet, "subAccounts") || Date.now() - journal.resource(wallet, "subAccounts").updatedAt > 86400000) {
@@ -322,9 +331,9 @@ async function resourceWallet(wallet) {
 async function snapshotLoop(foreground) {
   let cursor = 0;
   while (running) {
-    const active = journal.activeWallets(); const activeSet = new Set(active);
+    const active = foreground ? refreshViewerPriorities() : journal.activeWallets(); const activeSet = new Set(active);
     const background = foreground ? [] : [...targets.keys()].filter((address) => !activeSet.has(address));
-    const wallet = foreground ? active.find((address) => !activeWork.has(address) && Date.now() >= (snapshotDue.get(address) ?? 0))
+    const wallet = foreground ? nextDueWallet(active, activeWork, snapshotDue)
       : background[cursor++ % Math.max(1, background.length)];
     if (!wallet || activeWork.has(wallet) || Date.now() < (snapshotDue.get(wallet) ?? 0)) { await sleep(100); continue; }
     activeWork.add(wallet);
@@ -334,7 +343,7 @@ async function snapshotLoop(foreground) {
 }
 async function resourcesLoop() {
   while (running) {
-    const wallet = journal.activeWallets().find((address) => !resourcesInFlight.has(address) && Date.now() >= (resourceDue.get(address) ?? 0));
+    const wallet = nextDueWallet(journal.activeWallets(), resourcesInFlight, resourceDue);
     if (!wallet) { await sleep(500); continue; }
     resourcesInFlight.add(wallet);
     try { await resourceWallet(wallet); } finally { resourcesInFlight.delete(wallet); }
@@ -389,6 +398,7 @@ async function deliverLoop() {
   }
 }
 function heartbeat() {
+  refreshViewerPriorities();
   if (Date.now() - diskCheckedAt > 60_000) {
     const filename = process.env.DEEPCURRENT_DB_PATH || path.join(process.cwd(), ".data", "deep-current.sqlite");
     const disk = statfsSync(path.dirname(filename)); freeBytes = Number(disk.bavail) * Number(disk.bsize); diskCheckedAt = Date.now();
