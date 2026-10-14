@@ -69,10 +69,10 @@ test("feed evidence separates historic closed, absent, unknown and current lifec
   const newOpen = j.events()[0];
   assert.equal(j.evidence([newOpen], 301)[0].positionStatus, "unknown");
   j.recordScope({ wallet, scope: "", requestedAt: 305, receivedAt: 310, payload: { assetPositions: [{ position: { coin: "BTC", szi: "1", leverage: { value: 5 } } }] } });
-  assert.equal(j.evidence([newOpen], 311)[0].positionStatus, "open"); assert.equal(j.evidence([open], 311)[0].positionStatus, "closed");
+  assert.equal(j.evidence([newOpen], 311)[0].positionStatus, "unknown"); assert.equal(j.evidence([open], 311)[0].positionStatus, "closed");
   assert.equal(j.evidence([newOpen], 311)[0].openedAt, null);
-  j.coverage(wallet, "fills", 300, 310, "covered_interval"); assert.equal(j.evidence([newOpen], 311)[0].openedAt, 300);
-  j.markStreamGap([wallet]); assert.equal(j.evidence([newOpen], 311)[0].openedAt, null);
+  j.coverage(wallet, "fills", 300, 310, "covered_interval"); assert.equal(j.evidence([newOpen], 311)[0].openedAt, 300); assert.equal(j.evidence([newOpen],311)[0].positionStatus,"open");
+  j.markStreamGap([wallet]); assert.equal(j.evidence([newOpen], 311)[0].openedAt, null); assert.equal(j.evidence([newOpen],311)[0].positionStatus,"unknown");
   j.recordScope({ wallet, scope: "", requestedAt: 315, receivedAt: 320, payload: { assetPositions: [] } });
   assert.equal(j.evidence([newOpen], 321)[0].positionStatus, "absent");
   assert.equal(j.evidence([newOpen], 40000)[0].positionStatus, "unknown");

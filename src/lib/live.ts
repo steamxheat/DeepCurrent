@@ -29,6 +29,12 @@ export function displayCoin(coin: string, names: Record<string, string>) {
   return names[coin] ?? coin;
 }
 
+export function positionStatusAt(fill: Pick<PulseFill,"positionStatus"|"checkedAt">, now: number): NonNullable<PulseFill["positionStatus"]> {
+  if(fill.positionStatus==="closed")return "closed";
+  if(!["open","absent"].includes(fill.positionStatus??"") || fill.checkedAt===undefined || !Number.isSafeInteger(fill.checkedAt) || !Number.isFinite(now) || now<fill.checkedAt || now-fill.checkedAt>=30000)return "unknown";
+  return fill.positionStatus!;
+}
+
 export function marketIdentity(coin: string) {
   if (coin.startsWith("#")) return { symbol: coin, venue: "Outcome market", type: "SPOT" as const };
   if (coin.includes("/")) {

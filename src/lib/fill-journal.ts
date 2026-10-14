@@ -379,15 +379,15 @@ export function createFillJournal(db: DatabaseSync) {
       const scope = details.scopes.find((scope) => scope.scope === marketScope(event.coin));
       if (!details.states.has(event.coin)) details.states.set(event.coin, getState(event.wallet, event.coin));
       const state = details.states.get(event.coin);
-      const completedTrade = details.trades.get(event.coin)?.find((trade) => trade.direction === event.direction && trade.openedAt !== null && trade.openedAt <= event.time && (trade.closedAt > event.time || event.action === "CLOSE" && trade.closedAt === event.time));
-      if (completedTrade) return { ...event, positionStatus: "closed" as const, openedAt: completedTrade.openedAt, closedAt: completedTrade.closedAt, netPnl: Number.isFinite(completedTrade.netPnl) ? completedTrade.netPnl : null };
-      const fresh = scope?.payload && !scope.error && scope.receivedAt >= event.time && now - scope.receivedAt < 30_000;
+      const completedTrade = details.trades.get(event.coin)?.find((trade) => trade.direction === event.direction && (event.action === "CLOSE" && trade.closedAt === event.time || trade.openedAt !== null && trade.openedAt <= event.time && trade.closedAt > event.time));
+      if (completedTrade) return { ...event, positionStatus: "closed" as const, openedAt: completedTrade.openedAt, closedAt: completedTrade.closedAt, netPnl: completedTrade.openedAt !== null && Number.isFinite(completedTrade.netPnl) ? completedTrade.netPnl : null };
+      const fresh = scope?.payload && !scope.error && scope.receivedAt >= event.time && now >= scope.receivedAt && now - scope.receivedAt < 30_000;
       const position = fresh ? (scope.payload!.assetPositions as { position: { coin: string; szi: string; leverage?: { value: number } } }[] | undefined)?.find((row) => row.position.coin === event.coin)?.position : undefined;
-      const aligned = position && state && !state.reason && state.lastTime <= scope!.receivedAt && decimalEqual(state.size, position.szi) && state.openedAt !== null && state.openedAt <= event.time;
+      const aligned = position && state && !state.reason && state.lastTime <= scope!.receivedAt && decimalEqual(state.size, position.szi) && state.openedAt !== null && state.openedAt <= event.time && event.precision === "exact" && ["OPEN","ADD","REDUCE","FLIP"].includes(event.action) && event.direction === (decimalSign(state.size)>0?"LONG":"SHORT");
       const coverage = details.coverage;
       const covered = aligned && coverage?.status === "covered_interval" && coverage.from_time <= state.openedAt! && coverage.through_time >= state.lastTime;
-      return { ...event, positionStatus: aligned ? "open" as const : fresh && !position && ["OPEN", "ADD", "FLIP"].includes(event.action) ? "absent" as const : "unknown" as const,
-        openedAt: covered ? state.openedAt : null, leverage: aligned ? position.leverage?.value : undefined,
+      return { ...event, positionStatus: covered ? "open" as const : fresh && !position && ["OPEN", "ADD", "FLIP"].includes(event.action) ? "absent" as const : "unknown" as const,
+        openedAt: covered ? state.openedAt : null, leverage: covered ? position.leverage?.value : undefined,
         checkedAt: scope?.receivedAt, reason: !fresh ? "Нет свежей сверки позиции" : !aligned ? "Начало или завершение позиции не подтверждено" : !covered ? "История открытия неполная" : undefined };
     });
   }
