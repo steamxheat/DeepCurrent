@@ -19,6 +19,7 @@ import { transaction } from "../src/lib/database.ts";
 import { createSocketBudget } from "../src/lib/socket-budget.ts";
 import { snapshotRefreshScopes, streamScopeSnapshots } from "../src/lib/wallet-snapshot.ts";
 import { createConfirmationQueue } from "../src/lib/confirmation-queue.ts";
+import { createRecoveryQueue } from "../src/lib/recovery-queue.ts";
 import { missingUserSubscriptions, selectStreamWallets } from "../src/lib/stream-wallets.ts";
 import { createCollectorHealth, diagnosticError } from "../src/lib/collector-health.ts";
 
@@ -32,12 +33,12 @@ let subscriptionLimited = false;
 // Exact fills take priority; optional user feeds compete for the source's actual user-channel cap.
 const userFillsOnly = true;
 let dexNames = [""]; let markets = []; let excludedMarkets = []; let coinNames = {}; let mids = {}; let midsAt = 0;
-const targets = new Map(); const subscribedUsers = new Set(); const ack = new Set(); const recoverQueue = new Set();
+const targets = new Map(); const subscribedUsers = new Set(); const ack = new Set(); const recoverQueue = createRecoveryQueue(journal.db);
 const subscribedAt = new Map(); const lastTrade = new Map();
 let watchedWallets = new Set();
 const seenMarkets = new Set();
 const confirmations = createConfirmationQueue((wallet, from, through, reason) => {
-  recoverQueue.add(wallet);
+  recoverQueue.add(wallet, from, through);
   health.event("confirmation_failed", { wallet, from, through, stage: reason, error: "Confirmation window missed; history recovery queued" });
 }); let confirmationRequests = 0; let confirmationFailures = 0;
 let fillsChanged = 0; let fillsRepeated = 0; let fillsRejected = 0;
@@ -211,7 +212,14 @@ function connect() {
   const wallets = [...new Set([...targets.keys(), ...subscribedUsers, ...journal.activeWallets()])];
   journal.markStreamGap(wallets, "stream_restart");
   const active = new Set(journal.activeWallets());
-  for (const wallet of wallets) if (journal.getCoverage(wallet) || active.has(wallet) || watchedWallets.has(wallet)) recoverQueue.add(wallet);
+  transaction(journal.db, () => {
+    const through = Date.now();
+    for (const wallet of wallets) {
+      const coverage = journal.getCoverage(wallet);
+      if (coverage) recoverQueue.add(wallet, Math.max(0, coverage.through_time - 1), through);
+      else if (watchedWallets.has(wallet) || active.has(wallet)) recoverQueue.add(wallet);
+    }
+  });
   socket.onopen = () => { health.event("connect", { durationMs: disconnectedAt ? Date.now() - disconnectedAt : 0, count: subscriptions.size }); disconnectedAt = 0; pendingSubscriptions.clear(); for (const subscription of subscriptions.values()) pendingSubscriptions.set(JSON.stringify(subscription), { method: "subscribe", subscription }); };
   socket.onmessage = ({ data }) => { try { handle(JSON.parse(String(data))); } catch (error) { health.event("stream_error", { error: diagnosticError(error), stage: "parse_or_ingest" }); journal.status("streamError", { message: error.message }); console.error("Stream:", error.message); } };
   socket.onerror = () => socket.close();
@@ -219,35 +227,45 @@ function connect() {
     disconnectedAt ||= Date.now(); health.event("disconnect", { code: event.code, clean: event.wasClean, stage: running ? "unexpected" : "shutdown" });
     ack.clear(); const wallets = [...new Set([...targets.keys(), ...subscribedUsers, ...journal.activeWallets()])];
     journal.markStreamGap(wallets);
-    const active = new Set(journal.activeWallets());
-    for (const wallet of wallets) if (journal.getCoverage(wallet) || active.has(wallet) || watchedWallets.has(wallet)) recoverQueue.add(wallet);
+    const through = Date.now(), received = lastReceive || through;
+    transaction(journal.db, () => {
+      for (const wallet of wallets) recoverQueue.add(wallet, Math.max(0, Math.min(journal.getCoverage(wallet)?.through_time ?? received, received) - 1), through);
+    });
     if (running) timers.push(setTimeout(connect, 3000));
   };
 }
-async function recover(wallet, priority) {
+async function recover(wallet, priority, job) {
   const started = Date.now();
   const covered = journal.getCoverage(wallet);
   const seed = await post({ type: "userFills", user: wallet, aggregateByTime: false }, priority);
   const end = Date.now();
   ingestBatch(seed.map((fill) => ({ wallet, fill, source: "userFills", mode: "history" })));
   const seedStart = seed.length ? Math.min(...seed.map((fill) => fill.time)) : end;
-  const from = Math.min(end, Math.max(0, (covered?.through_time ?? seedStart) - 1));
+  const from = Math.min(end, Math.max(0, Math.min((covered?.through_time ?? seedStart) - 1, job?.from_time ?? end)));
   const result = await recoverFills(from, end, (start, stop) => post({ type: "userFillsByTime", user: wallet, startTime: start, endTime: stop, aggregateByTime: false }, priority), 16);
   ingestBatch(result.fills.map((fill) => ({ wallet, fill, source: "userFills", mode: "history" })));
   // Only the recent seed proves API retention; an empty old range cannot prove no missing fills.
   const provenFrom = Math.max(from, seedStart);
   journal.coverage(wallet, "fills", result.complete ? provenFrom : from, result.complete ? end : Math.max(from, covered?.through_time ?? from), result.complete ? "covered_interval" : "gap", result.complete ? "older_history_not_proven" : JSON.stringify(result.gaps)); journal.project(100, 50);
-  health.event("recovery_ok", { wallet, from, through: end, complete: result.complete, count: result.fills.length, durationMs: Date.now() - started });
+  const complete = result.complete && (job?.from_time == null || job.from_time >= provenFrom) && (job?.through_time == null || job.through_time <= end);
+  health.event("recovery_ok", { wallet, from, through: end, complete, stage: complete ? "covered" : result.complete ? "older_history_not_proven" : "incomplete_interval", count: result.fills.length, durationMs: Date.now() - started });
   for (const gap of result.gaps) health.event("recovery_failed", { wallet, from: gap.from, through: gap.to, error: gap.reason, stage: "incomplete_interval" });
+  return { complete, reason: result.complete ? "older_history_not_proven" : "incomplete_interval" };
 }
 async function historyLoop(foreground = false) {
   while (running) {
     const active = new Set(journal.activeWallets());
-    const candidates = foreground ? [...active] : [...new Set([...subscribedUsers, ...watchedWallets, ...recoverQueue])].filter((wallet) => !active.has(wallet));
-    const wallet = candidates.find((address) => !historyInFlight.has(address) && Date.now() >= (historyDue.get(address) ?? 0));
-    if (!wallet) { await sleep(500); continue; } recoverQueue.delete(wallet); historyInFlight.add(wallet);
-    try { await recover(wallet, foreground ? 0 : 4); historyDue.set(wallet, Date.now() + 300_000); }
-    catch (error) { health.event("recovery_failed", { wallet, error: diagnosticError(error) }); recoverQueue.add(wallet); const covered = journal.getCoverage(wallet); journal.coverage(wallet, "fills", covered?.from_time ?? Date.now(), covered?.through_time ?? Date.now(), "gap", error.message); historyDue.set(wallet, Date.now() + 30_000); }
+    const candidates = foreground ? [...active] : [...new Set([...recoverQueue, ...watchedWallets, ...subscribedUsers])].filter((wallet) => !active.has(wallet));
+    const wallet = candidates.find((address) => !historyInFlight.has(address) && Date.now() >= Math.max(historyDue.get(address) ?? 0, recoverQueue.get(address)?.due_at ?? 0));
+    if (!wallet) { await sleep(500); continue; }
+    if (!recoverQueue.has(wallet)) recoverQueue.add(wallet);
+    const job = recoverQueue.get(wallet); historyInFlight.add(wallet);
+    try {
+      const result = await recover(wallet, foreground ? 0 : 4, job);
+      if (result.complete) { const removed = recoverQueue.complete(wallet, job.revision); historyDue.set(wallet, Date.now() + (removed ? 300_000 : 0)); }
+      else { recoverQueue.defer(wallet, result.reason === "older_history_not_proven" ? 3600_000 : 30_000, result.reason); historyDue.set(wallet, Date.now() + 30_000); }
+    }
+    catch (error) { health.event("recovery_failed", { wallet, error: diagnosticError(error) }); recoverQueue.defer(wallet, 30_000, diagnosticError(error)); const covered = journal.getCoverage(wallet); journal.coverage(wallet, "fills", covered?.from_time ?? Date.now(), covered?.through_time ?? Date.now(), "gap", error.message); historyDue.set(wallet, Date.now() + 30_000); }
     finally { historyInFlight.delete(wallet); }
   }
 }
@@ -263,9 +281,9 @@ async function confirmationLoop() {
       confirmationRequests++;
       ingestBatch(rows.map((fill) => ({ wallet: task.wallet, fill, source: "userFills", mode: "history" })));
       confirmed = !journal.hasUnconfirmed(task.wallet, task.from, task.through);
-      if (rows.length === 2000 || !confirmed) recoverQueue.add(task.wallet);
+      if (rows.length === 2000 || !confirmed) recoverQueue.add(task.wallet, task.from, task.through);
       journal.project(100, 10);
-    } catch (error) { health.event("confirmation_failed", { wallet: task.wallet, error: diagnosticError(error) }); confirmationFailures++; console.error("Fill confirmation:", error.message); recoverQueue.add(task.wallet); }
+    } catch (error) { health.event("confirmation_failed", { wallet: task.wallet, error: diagnosticError(error) }); confirmationFailures++; console.error("Fill confirmation:", error.message); recoverQueue.add(task.wallet, task.from, task.through); }
     confirmations.complete(task.wallet, task.through, confirmed);
   }
 }

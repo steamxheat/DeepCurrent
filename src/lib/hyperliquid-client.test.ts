@@ -3,6 +3,27 @@ import test from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { createInfoClient } from "./hyperliquid-client.ts";
 
+test("recovery gets reserved budget under sustained urgent load without raising the global limit", async (context) => {
+  context.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  let recovered = false, urgentCount = 0;
+  const client = createInfoClient(async (_url, options) => {
+    if (JSON.parse(String(options?.body)).type === "userFills") recovered = true;
+    else urgentCount++;
+    return Response.json([]);
+  });
+  for (let index = 0; index < 7; index++) await client.post({ type: "meta" }, 0);
+  const recovery = client.post({ type: "userFills" }, 4);
+  const urgent: Promise<unknown>[] = [];
+  for (let second = 0; second < 160; second++) {
+    urgent.push(client.post({ type: "meta" }, 0));
+    context.mock.timers.tick(1000); await setImmediate();
+  }
+  assert.equal(recovered, true); assert.ok(urgentCount > 30);
+  assert.equal(client.budget().weightPerMinute, 600); assert.ok(client.budget().tokens >= 0);
+  for (let second = 0; client.pending() && second < 500; second++) { context.mock.timers.tick(1000); await setImmediate(); }
+  await Promise.all([recovery, ...urgent]);
+});
+
 test("bulk HTTP work leaves a slot for urgent confirmations", async () => {
   const requests: Array<{ type: string; resolve: (response: Response) => void }> = [];
   const client = createInfoClient(async (_url, options) => new Promise<Response>((resolve) => requests.push({ type: JSON.parse(String(options?.body)).type, resolve })));

@@ -63,6 +63,7 @@ export function collectorHealthReport(db: DatabaseSync, since: number, now = Dat
   };
   const dataState = hasJournal ? {
     projectionBacklog: db.prepare("SELECT COUNT(*) count FROM projection_jobs").get(),
+    recoveryJobs: db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='recovery_jobs'").get() ? db.prepare("SELECT COUNT(*) count,MIN(queued_at) oldestQueuedAt,SUM(due_at>?) delayed,MAX(attempts) maxAttempts FROM recovery_jobs").get(now) : null,
     coverage: db.prepare("SELECT status,COUNT(*) wallets FROM ingestion_coverage WHERE feed='fills' GROUP BY status").all(),
     uncertainPositions: db.prepare("SELECT reason,COUNT(*) positions FROM position_projection WHERE reason IS NOT NULL GROUP BY reason").all(),
     snapshots: db.prepare("SELECT COUNT(*) scopes,SUM(last_error IS NOT NULL) errors,SUM(received_at<?) olderThan30Seconds FROM scope_snapshots").get(now - 30000),

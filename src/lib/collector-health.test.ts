@@ -3,6 +3,17 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { createCollectorHealth, collectorHealthReport, diagnosticError } from "./collector-health.ts";
 import { createFillJournal } from "./fill-journal.ts";
+import { createRecoveryQueue } from "./recovery-queue.ts";
+
+test("collector report distinguishes durable recovery backlog from legacy in-memory samples", () => {
+  const db = new DatabaseSync(":memory:"); createFillJournal(db); createCollectorHealth(db, "run").event("start");
+  assert.equal(collectorHealthReport(db, 0).dataState?.recoveryJobs, null);
+  const queue = createRecoveryQueue(db), wallet = `0x${"b".repeat(40)}`;
+  queue.add(wallet, 10, 20); queue.defer(wallet, 30000, "offline");
+  const jobs = collectorHealthReport(db, 0).dataState?.recoveryJobs;
+  assert.equal(jobs?.count, 1); assert.equal(jobs?.delayed, 1); assert.equal(jobs?.maxAttempts, 1);
+  assert.ok(typeof jobs?.oldestQueuedAt === "number"); db.close();
+});
 
 const sample = { connected: true, lastReceive: 1000, recoveryBacklog: 2, pendingRequests: 3, activeRequests: 1, confirmationBacklog: 4, confirmationFailures: 0, cooldownUntil: 0, freeBytes: 2 ** 32 };
 
