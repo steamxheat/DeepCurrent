@@ -159,7 +159,7 @@ export function findConfluences(fills: Fill[], now = Date.now(), windowMs = 30 *
     const rows = byPosition.get(key) ?? []; rows.push(fill); byPosition.set(key, rows);
   }
   const ordered = [...byPosition.values()].flatMap(rows => {
-    const chain = orderFillChain(mergeFills(rows));
+    const chain = orderFillChain([...new Map(rows.map(fill => [fillKey(fill),fill])).values()]);
     return chain.fills.filter(fill => !chain.ambiguousTimes.has(fill.time));
   });
   const clusters = relatedWallets(ordered, context);
