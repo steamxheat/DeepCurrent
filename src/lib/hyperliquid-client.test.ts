@@ -45,8 +45,8 @@ test("viewing a wallet promotes its already queued work without dropping the res
   const confirmation = client.post({ type: "userFillsByTime" }, 0);
   client.prioritizeWallet(wallet.toUpperCase());
   assert.equal(types.length, 7); // Retain the 120-weight reservation until the budget actually refills.
-  context.mock.timers.tick(11000); await background; await confirmation;
-  assert.deepEqual(types.slice(7), ["userFills", "userFillsByTime"]);
+  context.mock.timers.tick(15000); await background; await confirmation;
+  assert.deepEqual(types.slice(7), ["userFillsByTime", "userFills"]);
 });
 
 test("429 releases workers and applies one shared cooldown before retry", async (context) => {
