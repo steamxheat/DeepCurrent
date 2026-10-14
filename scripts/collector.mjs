@@ -7,7 +7,7 @@ import { decimalAdd, fillTransition, orderFillChain } from "../src/lib/position-
 import { sendWebPush, webPushConfigured } from "../src/lib/web-push-delivery.ts";
 import { recordFundingEvents, recordOrderEvents } from "../src/lib/event-store.ts";
 import { getFillJournal, validWalletAddress } from "../src/lib/fill-journal.ts";
-import { recoverFills } from "../src/lib/fill-recovery.ts";
+import { recoverFills, recoveryCoverage } from "../src/lib/fill-recovery.ts";
 import { createInfoClient } from "../src/lib/hyperliquid-client.ts";
 import { availableWalletScreenings } from "../src/lib/wallet-registry.ts";
 import { hasPositiveMonthPnl, walletQuality } from "../src/lib/wallet-quality.ts";
@@ -157,9 +157,11 @@ function selectUsers() {
   for (const subscription of missingUserSubscriptions(subscribedUsers, ack, userFillsOnly)) subscribe(subscription);
 }
 function ingestBatch(rows) {
+  let rejected = 0;
   for (let start = 0; start < rows.length; start += 500) {
     const results = journal.ingestBatch(rows.slice(start, start + 500));
     const errors = results.filter((result) => result.error);
+    rejected += errors.length;
     fillsChanged += results.filter((result) => result.changed).length; fillsRepeated += results.filter((result) => !result.changed && !result.error).length; fillsRejected += errors.length;
     if (errors.length) {
       // Keep a bounded example set per batch; total rejected count is always recorded.
@@ -167,6 +169,7 @@ function ingestBatch(rows) {
       console.error("Fill evidence:", errors.length, errors[0].error);
     }
   }
+  return rejected;
 }
 function orders(wallet, rows) {
   recordOrderEvents(rows.flatMap((row) => row.order?.coin ? [{ eventKey: `${wallet}:order:${row.order.oid}:${row.status}:${row.statusTimestamp}`, wallet,
@@ -239,18 +242,20 @@ async function recover(wallet, priority, job) {
   const covered = journal.getCoverage(wallet);
   const seed = await post({ type: "userFills", user: wallet, aggregateByTime: false }, priority);
   const end = Date.now();
-  ingestBatch(seed.map((fill) => ({ wallet, fill, source: "userFills", mode: "history" })));
+  if (!Array.isArray(seed) || seed.some((fill) => !fill || !Number.isSafeInteger(fill.time) || fill.time < 0 || fill.time > end)) throw new Error("Invalid recovery seed");
+  let rejected = ingestBatch(seed.map((fill) => ({ wallet, fill, source: "userFills", mode: "history" })));
   const seedStart = seed.length ? Math.min(...seed.map((fill) => fill.time)) : end;
   const from = Math.min(end, Math.max(0, Math.min((covered?.through_time ?? seedStart) - 1, job?.from_time ?? end)));
   const result = await recoverFills(from, end, (start, stop) => post({ type: "userFillsByTime", user: wallet, startTime: start, endTime: stop, aggregateByTime: false }, priority), 16);
-  ingestBatch(result.fills.map((fill) => ({ wallet, fill, source: "userFills", mode: "history" })));
+  rejected += ingestBatch(result.fills.map((fill) => ({ wallet, fill, source: "userFills", mode: "history" })));
+  if (rejected) { result.complete = false; result.gaps.push({ from, to: end, reason: "rejected_history_fills" }); }
   // Only the recent seed proves API retention; an empty old range cannot prove no missing fills.
-  const provenFrom = Math.max(from, seedStart);
-  journal.coverage(wallet, "fills", result.complete ? provenFrom : from, result.complete ? end : Math.max(from, covered?.through_time ?? from), result.complete ? "covered_interval" : "gap", result.complete ? "older_history_not_proven" : JSON.stringify(result.gaps)); journal.project(100, 50);
-  const complete = result.complete && (job?.from_time == null || job.from_time >= provenFrom) && (job?.through_time == null || job.through_time <= end);
-  health.event("recovery_ok", { wallet, from, through: end, complete, stage: complete ? "covered" : result.complete ? "older_history_not_proven" : "incomplete_interval", count: result.fills.length, durationMs: Date.now() - started });
+  const proof = recoveryCoverage(result, from, end, seedStart, journal.hasUnconfirmed(wallet, from, end), job);
+  if (!proof.complete) recoverQueue.add(wallet, from, end);
+  journal.coverage(wallet, "fills", proof.from, proof.status === "gap" ? Math.max(from, covered?.through_time ?? from) : proof.through, proof.status, result.gaps.length ? JSON.stringify(result.gaps) : proof.reason); journal.project(100, 50);
+  health.event("recovery_ok", { wallet, from, through: end, complete: proof.complete, stage: proof.reason ?? "covered", count: result.fills.length, durationMs: Date.now() - started });
   for (const gap of result.gaps) health.event("recovery_failed", { wallet, from: gap.from, through: gap.to, error: gap.reason, stage: "incomplete_interval" });
-  return { complete, reason: result.complete ? "older_history_not_proven" : "incomplete_interval" };
+  return { complete: proof.complete, reason: proof.reason };
 }
 async function historyLoop(foreground = false) {
   while (running) {

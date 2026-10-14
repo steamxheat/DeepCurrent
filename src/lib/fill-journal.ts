@@ -317,7 +317,7 @@ export function createFillJournal(db: DatabaseSync) {
     });
   }
   function hasUnconfirmed(wallet: string, from: number, through: number) {
-    return Boolean(db.prepare("SELECT 1 FROM canonical_fills WHERE wallet=? AND occurred_at BETWEEN ? AND ? AND json_extract(payload,'$.startPosition') IS NULL LIMIT 1")
+    return Boolean(db.prepare("SELECT 1 FROM canonical_fills WHERE wallet=? AND occurred_at BETWEEN ? AND ? AND (json_extract(payload,'$.startPosition') IS NULL OR conflict=1) LIMIT 1")
       .get(wallet.toLowerCase(), from, through));
   }
   function touchWallet(wallet: string, now = Date.now()) {
