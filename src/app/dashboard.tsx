@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AdminPanel } from "./admin-panel";
+import { EventTiming } from "./event-timing";
 import type { CoinFlow, DashboardData, MarketMover, PulseFill, WalletRow } from "@/lib/hyperliquid";
 import { activityKind, marketIdentity, mergePulseFills } from "@/lib/live";
 import { findConfluences } from "@/lib/stats";
@@ -441,8 +442,6 @@ function ActivityToolbar({ filters, coins, setFilters }: { filters: ActivityFilt
 
 function FillFeed({ fills, favorites, money, time, onFavorite, onRemember, onCopy, compact = false }: { fills: PulseFill[]; favorites: Set<string>; money(value: number): string; time(value: number): string; onFavorite(address: string): void; onRemember(address: string): void; onCopy(value: string, message?: string): void; compact?: boolean }) {
   const t = useT();
-  const [now, setNow] = useState(0);
-  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
   if (!fills.length) return <Empty text={t("Новые сделки появятся здесь автоматически.", "New trades will appear here automatically.")}/>;
   return <div className="divide-y divide-[var(--line)]">{fills.map((fill, index) => {
     const action = activityKind(fill); const market = marketIdentity(fill.coin); const notional = Math.abs(Number(fill.sz) * Number(fill.px));
@@ -455,7 +454,7 @@ function FillFeed({ fills, favorites, money, time, onFavorite, onRemember, onCop
         <p className="mono mt-1 text-xs text-white">{money(notional)} {fill.leverage ? `· ${fill.leverage}×` : `· ${t("плечо неизвестно", "leverage unknown")}`}</p>
         <p className="mono mt-1 text-xs text-[var(--muted)]">{Number(fill.sz).toLocaleString("en-US", { maximumFractionDigits: 8 })} {market.symbol} @ {price(Number(fill.px))}</p>
         <time className="mono mt-1 block text-xs" title={new Date(fill.time).toISOString()}>{compact ? time(fill.time) : `${walletTime(fill.time)} MSK`}</time>
-        {!compact && <p className="mt-1 text-xs text-[var(--muted)]">{fill.receivedAt ? `${t("Получено", "Received")} ${now ? `${Math.max(0, (now - fill.receivedAt) / 1000).toFixed(1)} ${t("с назад", "seconds ago")}` : walletTime(fill.receivedAt)} · ${t("задержка получения", "ingestion delay")} ${Math.max(0, (fill.receivedAt - fill.time) / 1000).toFixed(3)} с` : t("Время получения не сохранено", "Receive time unavailable")} · {fill.source === "market" ? "Market trades" : "User fills"}</p>}
+        <EventTiming fill={fill} language={t("ru", "en") as UserLanguage} compact={compact}/>
         {!compact && <p className={`mt-1 text-xs ${fill.positionStatus === "closed" ? "text-[var(--cyan)]" : "text-[var(--muted)]"}`}>{fill.positionStatus === "closed" ? `${t("Закрыта", "Closed")} ${walletTime(fill.closedAt!)} MSK · ${fill.openedAt == null ? t("длительность неизвестна", "duration unknown") : `${t("через", "after")} ${walletDuration(fill.closedAt! - fill.openedAt)}`} · ${t("результат после комиссий", "result after fees")}: ${fill.netPnl == null ? "—" : money(fill.netPnl)}` : fill.positionStatus === "open" ? t("Свежая сверка: позиция активна", "Fresh reconciliation: position active") : fill.positionStatus === "absent" ? t("В свежем снимке позиции уже нет. Время закрытия не установлено; это не активный вход.", "Position absent in a fresh snapshot. Close time unknown; not an active entry.") : t("Текущий статус позиции неизвестен — это не сигнал для входа", "Current position status unknown — not an entry signal")}</p>}
         {!compact && <p className="mt-1 text-[10px] leading-relaxed text-[var(--muted)]">{action.exact && Number.isFinite(before) ? `${t("Позиция после сделки", "Position after fill")}: ${before.toLocaleString("en-US", { maximumFractionDigits: 5 })} → ${after.toLocaleString("en-US", { maximumFractionDigits: 5 })}` : t("Подтверждённая сделка; Open/Close неизвестен без истории позиции", "Confirmed fill; Open/Close is unknown without position history")}</p>}
       </div>

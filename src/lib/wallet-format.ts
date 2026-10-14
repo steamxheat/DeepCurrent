@@ -6,6 +6,7 @@ export const walletMoney = (value: number | null, compact = false) => value === 
 }).format(value);
 export const walletPrice = (value: number | null) => value === null || !Number.isFinite(value) ? "—" : belowPrecision(value) ? tiny(value) : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: Math.abs(value) < 1 ? 20 : 8 }).format(value);
 export const walletTime = (value: number, language = "ru") => new Intl.DateTimeFormat(language === "en" ? "en-GB" : "ru-RU", { timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(value);
+export const eventDelay = (from: number | null | undefined, to: number | null | undefined, language = "ru") => from == null || to == null || !Number.isSafeInteger(from) || !Number.isSafeInteger(to) || to < from ? "—" : `${new Intl.NumberFormat(language === "en" ? "en-GB" : "ru-RU", { minimumFractionDigits: 3, maximumFractionDigits: 3 }).format((to - from) / 1000)} ${language === "en" ? "s" : "с"}`;
 export const walletDuration = (milliseconds: number, language = "ru") => {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000)); const minutes = Math.floor(seconds / 60);
   const days = Math.floor(minutes / 1440); const hours = Math.floor((minutes % 1440) / 60); const rest = minutes % 60;

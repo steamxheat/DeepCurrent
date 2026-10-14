@@ -15,3 +15,9 @@ test("live wire carries lifecycle status and preserves a close after later enric
   const [decoded] = decodeLiveFills(JSON.parse(JSON.stringify(encodeLiveFills([fill]))));
   assert.equal(decoded.closedAt, 200); assert.equal(decoded.positionStatus, "closed"); assert.equal(decoded.receivedAt, 110); assert.equal(decoded.action, "OPEN");
 });
+
+test("live timing survives without position status and null confirmation invalidates earlier timing", () => {
+  const fill = { wallet:`0x${"a".repeat(40)}`, coin:"BTC", time:100, receivedAt:110, confirmedAt:900, px:"100", sz:"1", side:"B", hash:"h", dir:"Open Long", source:"user" };
+  assert.equal(decodeLiveFills(JSON.parse(JSON.stringify(encodeLiveFills([fill]))))[0].confirmedAt,900);
+  assert.equal(decodeLiveFills(JSON.parse(JSON.stringify(encodeLiveFills([{...fill,confirmedAt:null}]))))[0].confirmedAt,null);
+});

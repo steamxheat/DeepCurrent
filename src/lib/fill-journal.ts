@@ -21,6 +21,7 @@ const digest = (value: string) => createHash("sha256").update(value).digest("hex
 const parse = (row: FillRow): StoredFill => ({ ...JSON.parse(row.payload), id: row.id, wallet: row.wallet,
   source: JSON.parse(row.payload).startPosition === undefined ? "market" : "user", revision: row.revision, receivedAt: row.received_at });
 const stateFrom = (row?: StateRow): PositionState | null => row ? { size: row.size, openedAt: row.opened_at, lastTime: row.last_time, reason: row.reason } : null;
+const parseEvent = (row: { payload: string; confirmed_at: number | null }) => ({ ...JSON.parse(row.payload), confirmedAt: row.confirmed_at ?? null });
 
 export function createFillJournal(db: DatabaseSync) {
   let batching = false;
@@ -241,11 +242,11 @@ export function createFillJournal(db: DatabaseSync) {
   }
 
   function events(since = 0, limit = 2_000, wallet?: string) {
-    return (db.prepare(`SELECT payload FROM lifecycle_events WHERE occurred_at>=? ${wallet ? "AND wallet=?" : ""} ORDER BY occurred_at DESC,id LIMIT ?`)
-      .all(...(wallet ? [since, wallet.toLowerCase(), limit] : [since, limit])) as { payload: string }[]).map((row) => JSON.parse(row.payload) as StoredFill & { action: string; direction: string; precision: string; beforeSize?: number; afterSize?: number });
+    return (db.prepare(`SELECT payload,confirmed_at FROM lifecycle_events WHERE occurred_at>=? ${wallet ? "AND wallet=?" : ""} ORDER BY occurred_at DESC,id LIMIT ?`)
+      .all(...(wallet ? [since, wallet.toLowerCase(), limit] : [since, limit])) as { payload: string; confirmed_at: number | null }[]).map((row) => parseEvent(row) as StoredFill & { confirmedAt: number | null; action: string; direction: string; precision: string; beforeSize?: number; afterSize?: number });
   }
   function eventsSince(sequence: number, since = 0, limit = 2001) {
-    return (db.prepare("SELECT payload FROM lifecycle_events WHERE updated_seq>? AND occurred_at>=? ORDER BY updated_seq,id LIMIT ?").all(sequence, since, limit) as { payload: string }[]).map((row) => JSON.parse(row.payload));
+    return (db.prepare("SELECT payload,confirmed_at FROM lifecycle_events WHERE updated_seq>? AND occurred_at>=? ORDER BY updated_seq,id LIMIT ?").all(sequence, since, limit) as { payload: string; confirmed_at: number | null }[]).map(parseEvent);
   }
 
   function recordScope(input: ScopeSnapshot) {
@@ -404,8 +405,8 @@ export function createFillJournal(db: DatabaseSync) {
     const order = input.order === "oldest" ? "occurred_at ASC,id ASC" : input.order === "largest" ? "CAST(json_extract(payload,'$.px') AS REAL)*CAST(json_extract(payload,'$.sz') AS REAL) DESC,occurred_at DESC,id DESC"
       : input.order === "price" || input.order === "price-asc" ? `CAST(json_extract(payload,'$.px') AS REAL) ${input.order === "price" ? "DESC" : "ASC"},occurred_at DESC,id DESC` : "occurred_at DESC,id DESC";
     const offset = Math.max(0, Math.min(100_000, Math.floor(input.offset ?? 0))); const limit = Math.max(1, Math.min(100, Math.floor(input.limit ?? 50)));
-    const rows = db.prepare(`SELECT payload FROM lifecycle_events WHERE ${where.join(" AND ")} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...values, limit + 1, offset) as { payload: string }[];
-    return { events: rows.slice(0, limit).map((row) => JSON.parse(row.payload)), nextOffset: rows.length > limit ? offset + limit : null };
+    const rows = db.prepare(`SELECT payload,confirmed_at FROM lifecycle_events WHERE ${where.join(" AND ")} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...values, limit + 1, offset) as { payload: string; confirmed_at: number | null }[];
+    return { events: rows.slice(0, limit).map(parseEvent), nextOffset: rows.length > limit ? offset + limit : null };
   }
   function status(name: string, payload?: unknown) {
     if (payload !== undefined) db.prepare("INSERT INTO collector_status VALUES (?,?,?) ON CONFLICT(name) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at").run(name, JSON.stringify(payload), Date.now());

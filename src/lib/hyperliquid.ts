@@ -34,7 +34,7 @@ export type WalletRow = {
   dayRoi: number; dayVolume: number; weekPnl: number; monthPnl: number; monthRoi: number; qualityScore?: number;
   winRate60d?: number; trades60d?: number; netPnl60d?: number; vettedAt?: number;
 };
-export type FillEvidence = { action?: string; direction?: string; receivedAt?: number; positionStatus?: "open" | "closed" | "absent" | "unknown"; openedAt?: number | null; closedAt?: number; netPnl?: number | null; leverage?: number; checkedAt?: number; reason?: string };
+export type FillEvidence = { action?: string; direction?: string; receivedAt?: number; confirmedAt?: number | null; positionStatus?: "open" | "closed" | "absent" | "unknown"; openedAt?: number | null; closedAt?: number; netPnl?: number | null; leverage?: number; checkedAt?: number; reason?: string };
 export type PulseFill = Fill & FillEvidence & { wallet: string; walletName: string; source?: "user" | "market" };
 export type CoinFlow = { coin: string; buys: number; sells: number; realizedPnl: number | null; trades: number; wallets: number };
 export type MarketMover = {

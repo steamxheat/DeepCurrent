@@ -13,6 +13,25 @@ const wallet = `0x${"a".repeat(40)}`;
 const fill = (overrides: Partial<RawFill> = {}): RawFill => ({ coin: "BTC", time: 100, side: "B", sz: "1", px: "100", startPosition: "0", fee: "1", feeToken: "USDC", closedPnl: "0", dir: "Open Long", hash: "h", tid: 1, ...overrides });
 const setup = () => createFillJournal(new DatabaseSync(":memory:"));
 
+test("all event readers expose exchange, first receipt and journal confirmation without inventing legacy times", context => {
+  context.mock.timers.enable({ apis: ["Date"], now: 110 });
+  const journal = setup();
+  try {
+    journal.ingest(wallet, { ...fill(), startPosition: undefined }, "market", "live", 110);
+    assert.equal(journal.events()[0].confirmedAt, null);
+    context.mock.timers.setTime(500); journal.ingest(wallet, fill(), "userFills", "history", 500);
+    context.mock.timers.setTime(900); journal.project();
+    for (const event of [journal.events()[0], journal.eventsSince(0)[0], journal.queryEvents({wallet}).events[0]]) {
+      assert.equal(event.time,100); assert.equal(event.receivedAt,110); assert.equal(event.confirmedAt,900);
+    }
+    context.mock.timers.setTime(1200); journal.ingest(wallet, fill(), "userFills", "history",1200); journal.project();
+    assert.equal(journal.events()[0].confirmedAt,900);
+    journal.db.prepare("UPDATE lifecycle_events SET confirmed_at=NULL").run();
+    assert.equal(journal.queryEvents({wallet}).events[0].confirmedAt,null);
+    journal.ingest(wallet, fill({sz:"2"}), "userFills"); journal.project(); assert.equal(journal.events()[0].confirmedAt,null);
+  } finally { journal.db.close(); }
+});
+
 test("unconfirmed or conflicting intervening executions cannot invent a completed opening", () => {
   for (const conflict of [false, true]) {
     const j = setup(); j.ingest(wallet, fill(), "userFills");
