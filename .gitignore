@@ -12,7 +12,7 @@
 
 # testing
 /coverage
-/backups/qa-soak-*/
+/backups/
 /.impeccable/
 
 # next.js

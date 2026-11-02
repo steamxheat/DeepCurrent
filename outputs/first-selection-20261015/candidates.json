@@ -1,0 +1,413 @@
+{
+  "generatedAt": "2026-10-15T21:00:38.086Z",
+  "criteriaRevision": "2026-10-15-quality-v3",
+  "method": "Official dydx indexer /pnl exact-30d-window cheap filter (quality-only) run live on production-reachable Mac. Each number traces to saved responses in backups/dydx-leaderboard-cohort-20261015/screening.sqlite.",
+  "exactWindow": {
+    "start": "2026-09-15T20:00:00.000Z",
+    "end": "2026-10-15T20:00:00.000Z"
+  },
+  "gatesAppliedHere": [
+    "official_net_pnl30d_ge_50000",
+    "official_alltime_pnl_positive"
+  ],
+  "gatesStillPending": [
+    "lifetime_winrate_ge_60 (needs dydx-raw-audit bug#1 fix for cross-zero flips)",
+    "volume30d_ge_300000",
+    "max_drawdown_le_20pct (adapter not implemented)",
+    "non_scalping",
+    "current_positions_replay_match_all_subaccounts",
+    "latency_le_5s_live"
+  ],
+  "cohortSize": 32,
+  "counts": {
+    "passedCheapFilter": 4,
+    "needsReviewError": 2,
+    "rejected": 26
+  },
+  "acceptedFinancialPassers": [
+    {
+      "rank": 1,
+      "address": "dydx1ml2d6jjrcsdux0ashrrap35n5raf439j4za7sp",
+      "leaderboardReportedNetPnl30dUsd": 2146845.1,
+      "officialNetPnl30dUsd": "350425.308538882",
+      "officialAlltimePnl": "972111.26873472",
+      "subaccounts": 1,
+      "cheapFilter": "PASS",
+      "reason": "profit_passed_risk_style_history_live_pending"
+    },
+    {
+      "rank": 6,
+      "address": "dydx1zcgn9jsgx4jq0zyxm243hat9mfuar5f8ktl7sd",
+      "leaderboardReportedNetPnl30dUsd": 108283.88,
+      "officialNetPnl30dUsd": "77442.62074327",
+      "officialAlltimePnl": "146530.568242528",
+      "subaccounts": 1,
+      "cheapFilter": "PASS",
+      "reason": "profit_passed_risk_style_history_live_pending"
+    },
+    {
+      "rank": 3,
+      "address": "dydx124h9adt0ymc5dcz5t42ecnl0e98rtqkxdd29fj",
+      "leaderboardReportedNetPnl30dUsd": 459248.35,
+      "officialNetPnl30dUsd": "69765.744052672",
+      "officialAlltimePnl": "332760.878278",
+      "subaccounts": 1,
+      "cheapFilter": "PASS",
+      "reason": "profit_passed_risk_style_history_live_pending"
+    },
+    {
+      "rank": 4,
+      "address": "dydx1qxk20rtptukuvewfdd533lnefh3njw0tet68ll",
+      "leaderboardReportedNetPnl30dUsd": 129590.05,
+      "officialNetPnl30dUsd": "57063.509115092",
+      "officialAlltimePnl": "51322.653357",
+      "subaccounts": 1,
+      "cheapFilter": "PASS",
+      "reason": "profit_passed_risk_style_history_live_pending"
+    }
+  ],
+  "needsReviewErrors": [
+    {
+      "rank": 29,
+      "address": "dydx1m9hg73dtn5ku8ulmj8rjmdqh0hk7uuhawc69cn",
+      "leaderboardReportedNetPnl30dUsd": 4977.06,
+      "officialNetPnl30dUsd": null,
+      "officialAlltimePnl": null,
+      "subaccounts": null,
+      "cheapFilter": "needs_review_error",
+      "reason": "stale_official_pnl"
+    },
+    {
+      "rank": 30,
+      "address": "dydx12ar5c446txrnel3y2mlhr4w4vdqf7cm9fd2ycm",
+      "leaderboardReportedNetPnl30dUsd": 4760.13,
+      "officialNetPnl30dUsd": null,
+      "officialAlltimePnl": null,
+      "subaccounts": null,
+      "cheapFilter": "needs_review_error",
+      "reason": "stale_official_pnl"
+    }
+  ],
+  "allRows": [
+    {
+      "rank": 1,
+      "address": "dydx1ml2d6jjrcsdux0ashrrap35n5raf439j4za7sp",
+      "leaderboardReportedNetPnl30dUsd": 2146845.1,
+      "officialNetPnl30dUsd": "350425.308538882",
+      "officialAlltimePnl": "972111.26873472",
+      "subaccounts": 1,
+      "cheapFilter": "PASS",
+      "reason": "profit_passed_risk_style_history_live_pending"
+    },
+    {
+      "rank": 2,
+      "address": "dydx10hpl83hamwz0pxvjlanh5rcas3mdgf8xk7g7ra",
+      "leaderboardReportedNetPnl30dUsd": 515160.28,
+      "officialNetPnl30dUsd": "58487.633281331",
+      "officialAlltimePnl": "-1597276.58892964",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "nonpositive_official_lifetime_pnl"
+    },
+    {
+      "rank": 3,
+      "address": "dydx124h9adt0ymc5dcz5t42ecnl0e98rtqkxdd29fj",
+      "leaderboardReportedNetPnl30dUsd": 459248.35,
+      "officialNetPnl30dUsd": "69765.744052672",
+      "officialAlltimePnl": "332760.878278",
+      "subaccounts": 1,
+      "cheapFilter": "PASS",
+      "reason": "profit_passed_risk_style_history_live_pending"
+    },
+    {
+      "rank": 4,
+      "address": "dydx1qxk20rtptukuvewfdd533lnefh3njw0tet68ll",
+      "leaderboardReportedNetPnl30dUsd": 129590.05,
+      "officialNetPnl30dUsd": "57063.509115092",
+      "officialAlltimePnl": "51322.653357",
+      "subaccounts": 1,
+      "cheapFilter": "PASS",
+      "reason": "profit_passed_risk_style_history_live_pending"
+    },
+    {
+      "rank": 5,
+      "address": "dydx15s4h8z5sxlw390ka3j6y9annvhpkk4q68kle7a",
+      "leaderboardReportedNetPnl30dUsd": 108858.98,
+      "officialNetPnl30dUsd": "24896.113094032",
+      "officialAlltimePnl": "46086.463268792",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 6,
+      "address": "dydx1zcgn9jsgx4jq0zyxm243hat9mfuar5f8ktl7sd",
+      "leaderboardReportedNetPnl30dUsd": 108283.88,
+      "officialNetPnl30dUsd": "77442.62074327",
+      "officialAlltimePnl": "146530.568242528",
+      "subaccounts": 1,
+      "cheapFilter": "PASS",
+      "reason": "profit_passed_risk_style_history_live_pending"
+    },
+    {
+      "rank": 7,
+      "address": "dydx13kum2nmly6fd68hu2ekmz7frjq66ksvhspekvz",
+      "leaderboardReportedNetPnl30dUsd": 94174.72,
+      "officialNetPnl30dUsd": "34354.757371949",
+      "officialAlltimePnl": "-1358918.664422",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 8,
+      "address": "dydx1mqar8wtteuxhehun95j9sx0weej32l5l55pqfw",
+      "leaderboardReportedNetPnl30dUsd": 82855.72,
+      "officialNetPnl30dUsd": "17786.745421599",
+      "officialAlltimePnl": "33992.460646541",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 9,
+      "address": "dydx1ddkmek6zzz4ggjkpmlfahlpls24yzrtypv7c46",
+      "leaderboardReportedNetPnl30dUsd": 74751.73,
+      "officialNetPnl30dUsd": "6856.331639",
+      "officialAlltimePnl": "586376.500918",
+      "subaccounts": 21,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 10,
+      "address": "dydx1rmt5tm8eesmp06nwsy0ulcy8x3d65wz3x2al25",
+      "leaderboardReportedNetPnl30dUsd": 74626.28,
+      "officialNetPnl30dUsd": "13531.661910148",
+      "officialAlltimePnl": "-105705.540595677",
+      "subaccounts": 2,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 11,
+      "address": "dydx1ufs97x7psym2735x7sfksdrsux63wzjfzfvpwd",
+      "leaderboardReportedNetPnl30dUsd": 58242.25,
+      "officialNetPnl30dUsd": "-29198.380535447",
+      "officialAlltimePnl": "55933.709847508",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 12,
+      "address": "dydx14dltc2w6y3dhf0naz8luglsvjt0vhvswm2j6d0",
+      "leaderboardReportedNetPnl30dUsd": 57015.45,
+      "officialNetPnl30dUsd": "-148283.299150246",
+      "officialAlltimePnl": "17094712.771864627",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 13,
+      "address": "dydx1pa4dlv44a5wpya29t8trjs44w7s9r96y0j0580",
+      "leaderboardReportedNetPnl30dUsd": 43262.76,
+      "officialNetPnl30dUsd": "17947.429694",
+      "officialAlltimePnl": "36008.997098",
+      "subaccounts": 2,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 14,
+      "address": "dydx1fzjh6cmtpkkjuywnmkp86sfjtshjrvrwznvgkz",
+      "leaderboardReportedNetPnl30dUsd": 23575.94,
+      "officialNetPnl30dUsd": "5455.72189485",
+      "officialAlltimePnl": "4341.69241204",
+      "subaccounts": 3,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 15,
+      "address": "dydx1vg8g0rkrtv35pag20u082gj8n4k7tths7ap0zm",
+      "leaderboardReportedNetPnl30dUsd": 23043.92,
+      "officialNetPnl30dUsd": "-1643.230254",
+      "officialAlltimePnl": "-6530.441098",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 16,
+      "address": "dydx1tz6xaeuwu8edptyq82aleveduymuemf4lvhttn",
+      "leaderboardReportedNetPnl30dUsd": 20450.56,
+      "officialNetPnl30dUsd": "-2888.04699",
+      "officialAlltimePnl": "906.304734",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 17,
+      "address": "dydx1460d6z4keehsej6t2xx8tda9pdl6l3lyymnf5z",
+      "leaderboardReportedNetPnl30dUsd": 19868,
+      "officialNetPnl30dUsd": "21472.296956",
+      "officialAlltimePnl": "91721.795769",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 18,
+      "address": "dydx1gv0cakrhmv02e26gx4gsuwn7tuhqsh0pw7ylnz",
+      "leaderboardReportedNetPnl30dUsd": 18832.31,
+      "officialNetPnl30dUsd": "3189.14235575",
+      "officialAlltimePnl": "-16017.408367016",
+      "subaccounts": 2,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 19,
+      "address": "dydx147fq0dfk625h325xjd9wcvx55am8578aj8eul3",
+      "leaderboardReportedNetPnl30dUsd": 17305.01,
+      "officialNetPnl30dUsd": "6188.76886",
+      "officialAlltimePnl": "24285.128487",
+      "subaccounts": 3,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 20,
+      "address": "dydx1z4998fpsqys029xuuz3kr8t64um0f4gxxnhlyw",
+      "leaderboardReportedNetPnl30dUsd": 15597.44,
+      "officialNetPnl30dUsd": "-66308.042997156",
+      "officialAlltimePnl": "-44706.018821",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 21,
+      "address": "dydx1al5sd6kezmwgdwdzd72pn0y2axpe9nmaunwwpc",
+      "leaderboardReportedNetPnl30dUsd": 13801.75,
+      "officialNetPnl30dUsd": "0",
+      "officialAlltimePnl": "-42218.77468",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 22,
+      "address": "dydx1klkt566wcz4hel793gah0t43lqlpqwg04h8uhf",
+      "leaderboardReportedNetPnl30dUsd": 11636.84,
+      "officialNetPnl30dUsd": "-42817.66943062",
+      "officialAlltimePnl": "-238003.5779092",
+      "subaccounts": 4,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 23,
+      "address": "dydx1fanp39v08sw646jxppcfy3682pk02v7r334gd5",
+      "leaderboardReportedNetPnl30dUsd": 10476.4,
+      "officialNetPnl30dUsd": "-789.179751758",
+      "officialAlltimePnl": "-35161.460012665",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 24,
+      "address": "dydx10ur40x9pcn8pdz5h6t9tjt0smuyuazvv0vvldf",
+      "leaderboardReportedNetPnl30dUsd": 10006.93,
+      "officialNetPnl30dUsd": "6777.346245077",
+      "officialAlltimePnl": "97951.478634897",
+      "subaccounts": 5,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 25,
+      "address": "dydx1039f5sxkl0t39vxcsnmlu62ly22typdap0zkyn",
+      "leaderboardReportedNetPnl30dUsd": 9451.11,
+      "officialNetPnl30dUsd": "8.907023407",
+      "officialAlltimePnl": "20442.036396946",
+      "subaccounts": 3,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 26,
+      "address": "dydx1kahh3jcyh5x34z73xzv8lrek6ywq3zqq5k78w0",
+      "leaderboardReportedNetPnl30dUsd": 8999.02,
+      "officialNetPnl30dUsd": "3592.977660886",
+      "officialAlltimePnl": "-34615.384918",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 27,
+      "address": "dydx1qdw6farnq5nmdecj75f90gx25fwul3q6py3e4w",
+      "leaderboardReportedNetPnl30dUsd": 8669.37,
+      "officialNetPnl30dUsd": "3979.559177",
+      "officialAlltimePnl": "151361.406741",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 28,
+      "address": "dydx1qqeac9sjya8ejyfvmae5saq8n5vyytq9xdujyd",
+      "leaderboardReportedNetPnl30dUsd": 5233.89,
+      "officialNetPnl30dUsd": "1328.906567596",
+      "officialAlltimePnl": "-15207.972861",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 29,
+      "address": "dydx1m9hg73dtn5ku8ulmj8rjmdqh0hk7uuhawc69cn",
+      "leaderboardReportedNetPnl30dUsd": 4977.06,
+      "officialNetPnl30dUsd": null,
+      "officialAlltimePnl": null,
+      "subaccounts": null,
+      "cheapFilter": "needs_review_error",
+      "reason": "stale_official_pnl"
+    },
+    {
+      "rank": 30,
+      "address": "dydx12ar5c446txrnel3y2mlhr4w4vdqf7cm9fd2ycm",
+      "leaderboardReportedNetPnl30dUsd": 4760.13,
+      "officialNetPnl30dUsd": null,
+      "officialAlltimePnl": null,
+      "subaccounts": null,
+      "cheapFilter": "needs_review_error",
+      "reason": "stale_official_pnl"
+    },
+    {
+      "rank": 35,
+      "address": "dydx159sv7hh8k0fye78hzhg7cf7j97yadqy4h5jj59",
+      "leaderboardReportedNetPnl30dUsd": 3500.84,
+      "officialNetPnl30dUsd": "766.413675752",
+      "officialAlltimePnl": "22557.05721",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    },
+    {
+      "rank": 46,
+      "address": "dydx1xqyww6mmj5pfz75wq7u88sjkx68p6ew3wlce76",
+      "leaderboardReportedNetPnl30dUsd": 632.6,
+      "officialNetPnl30dUsd": "-709.414723426",
+      "officialAlltimePnl": "11876.7806875",
+      "subaccounts": 1,
+      "cheapFilter": "rejected",
+      "reason": "net_pnl30d_below_50000"
+    }
+  ]
+}
